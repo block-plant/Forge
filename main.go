@@ -17,7 +17,9 @@ import (
 	"github.com/ayushkunwarsingh/forge/database"
 	"github.com/ayushkunwarsingh/forge/logger"
 	"github.com/ayushkunwarsingh/forge/realtime"
+	"github.com/ayushkunwarsingh/forge/rules"
 	"github.com/ayushkunwarsingh/forge/server"
+	"github.com/ayushkunwarsingh/forge/storage"
 )
 
 const banner = `
@@ -159,6 +161,57 @@ func main() {
 		"endpoints": "ws, stats, channels, publish",
 	})
 
+	// ── Storage Service ───────────────────────────────────────────
+
+	var storageEngine *storage.Engine
+	if cfg.Storage.Enabled {
+		storageEngine, err = storage.NewEngine(cfg, log)
+		if err != nil {
+			log.Fatal("Failed to initialize storage engine", logger.Fields{
+				"error": err.Error(),
+			})
+		}
+
+		// Register storage routes
+		storage.RegisterRoutes(router, storageEngine)
+
+		log.Info("Storage service registered", logger.Fields{
+			"endpoints": "upload, download, delete, list, metadata, signed-url, chunks",
+		})
+	}
+
+	// ── Rules Engine ──────────────────────────────────────────────
+
+	// Load security rules if a rules file exists
+	rulesFile := "forge.rules"
+	if rulesData, readErr := os.ReadFile(rulesFile); readErr == nil {
+		ruleSet, parseErrs := rules.ParseRules(string(rulesData))
+		if len(parseErrs) > 0 {
+			for _, e := range parseErrs {
+				log.Warn("Rules parse error", logger.Fields{"error": e.Error()})
+			}
+		} else {
+			// Validate rules
+			valErrors := rules.Validate(ruleSet)
+			for _, ve := range valErrors {
+				if ve.Severity == "error" {
+					log.Error("Rules validation error", logger.Fields{"error": ve.Error()})
+				} else {
+					log.Warn("Rules validation warning", logger.Fields{"warning": ve.Error()})
+				}
+			}
+
+			log.Info("Security rules loaded", logger.Fields{
+				"file":     rulesFile,
+				"services": len(ruleSet.Services),
+			})
+		}
+	} else {
+		log.Info("No rules file found, running without security rules", logger.Fields{
+			"expected": rulesFile,
+		})
+	}
+
 	// ── Health & Info Endpoints ──────────────────────────────────────
 
 	router.GET("/health", func(ctx *server.Context) {
@@ -170,6 +223,9 @@ func main() {
 			services["database"] = "ok"
 		}
 		services["realtime"] = "ok"
+		if storageEngine != nil {
+			services["storage"] = "ok"
+		}
 
 		ctx.JSON(200, map[string]interface{}{
 			"status":    "ok",
