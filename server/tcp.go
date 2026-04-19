@@ -123,7 +123,6 @@ func (s *Server) Shutdown(timeout time.Duration) error {
 // It reads the raw bytes, parses the HTTP request, routes it, and writes the response.
 func (s *Server) handleConnection(conn net.Conn) {
 	defer s.activeConns.Done()
-	defer conn.Close()
 
 	// Set connection timeouts
 	conn.SetReadDeadline(time.Now().Add(s.readTimeout))
@@ -141,6 +140,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 		resp.SetHeader("Content-Type", "text/plain")
 		resp.SetBody([]byte("Bad Request: " + err.Error()))
 		conn.Write(resp.Build())
+		conn.Close()
 		return
 	}
 
@@ -156,6 +156,12 @@ func (s *Server) handleConnection(conn net.Conn) {
 	// Route the request through the middleware chain and handler
 	s.router.ServeHTTP(ctx)
 
+	// If the connection was hijacked (e.g., WebSocket upgrade), don't write
+	// a response or close the connection — the handler owns it now.
+	if ctx.IsHijacked() {
+		return
+	}
+
 	// Write the response back over the TCP connection
 	responseBytes := resp.Build()
 	_, writeErr := conn.Write(responseBytes)
@@ -165,6 +171,8 @@ func (s *Server) handleConnection(conn net.Conn) {
 			"remote": conn.RemoteAddr().String(),
 		})
 	}
+
+	conn.Close()
 }
 
 // getPID returns the current process ID as a safe alternative to os.Getpid.

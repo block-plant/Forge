@@ -31,6 +31,10 @@ type Context struct {
 
 	// aborted flags that the middleware chain should stop.
 	aborted bool
+
+	// hijacked indicates the connection has been taken over (e.g., for WebSocket).
+	// When true, the server will NOT write a response or close the connection.
+	hijacked bool
 }
 
 // NewContext creates a new Context for a request.
@@ -221,4 +225,24 @@ func (c *Context) IsAborted() bool {
 // setHandlers sets the middleware + handler chain for this context.
 func (c *Context) setHandlers(handlers []HandlerFunc) {
 	c.handlers = handlers
+}
+
+// ---- Connection Hijack (for WebSocket) ----
+
+// Hijack takes over the underlying TCP connection.
+// After calling Hijack, the server will NOT write an HTTP response or close the connection.
+// The caller becomes responsible for the connection lifecycle.
+func (c *Context) Hijack() net.Conn {
+	c.hijacked = true
+	return c.conn
+}
+
+// Conn returns the raw TCP connection without hijacking.
+func (c *Context) Conn() net.Conn {
+	return c.conn
+}
+
+// IsHijacked returns whether the connection has been hijacked.
+func (c *Context) IsHijacked() bool {
+	return c.hijacked
 }

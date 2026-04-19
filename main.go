@@ -16,6 +16,7 @@ import (
 	"github.com/ayushkunwarsingh/forge/config"
 	"github.com/ayushkunwarsingh/forge/database"
 	"github.com/ayushkunwarsingh/forge/logger"
+	"github.com/ayushkunwarsingh/forge/realtime"
 	"github.com/ayushkunwarsingh/forge/server"
 )
 
@@ -141,6 +142,23 @@ func main() {
 		})
 	}
 
+	// ── Real-Time Service ──────────────────────────────────────────
+
+	hub := realtime.NewHub(log)
+	go hub.Run()
+
+	// Register real-time routes
+	realtime.RegisterRoutes(router, hub)
+
+	// Connect document change streams if database is enabled
+	if dbEngine != nil {
+		realtime.NewStreams(hub, dbEngine, log)
+	}
+
+	log.Info("Real-time service registered", logger.Fields{
+		"endpoints": "ws, stats, channels, publish",
+	})
+
 	// ── Health & Info Endpoints ──────────────────────────────────────
 
 	router.GET("/health", func(ctx *server.Context) {
@@ -151,6 +169,7 @@ func main() {
 		if dbEngine != nil {
 			services["database"] = "ok"
 		}
+		services["realtime"] = "ok"
 
 		ctx.JSON(200, map[string]interface{}{
 			"status":    "ok",
