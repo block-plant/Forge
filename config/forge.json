@@ -1,0 +1,42 @@
+{
+  "server": {
+    "host": "0.0.0.0",
+    "port": 8080,
+    "read_timeout": "30s",
+    "write_timeout": "30s",
+    "max_header_size": 8192,
+    "max_body_size": 10485760,
+    "enable_cors": true,
+    "cors_origins": ["*"]
+  },
+  "auth": {
+    "enabled": true,
+    "token_expiry": "1h",
+    "refresh_expiry": "720h",
+    "bcrypt_cost": 12,
+    "key_size": 4096
+  },
+  "database": {
+    "enabled": true,
+    "wal_dir": "database/wal",
+    "snapshot_dir": "database/snapshots",
+    "snapshot_interval": "5m",
+    "max_transaction_size": 500
+  },
+  "storage": {
+    "enabled": true,
+    "max_file_size": 104857600,
+    "chunk_size": 262144
+  },
+  "hosting": {
+    "enabled": true,
+    "cache_size": 1000,
+    "enable_compression": true
+  },
+  "log": {
+    "level": "info",
+    "pretty": true,
+    "output": "stdout"
+  },
+  "data_dir": "forge-data"
+}
