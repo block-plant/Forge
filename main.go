@@ -14,6 +14,7 @@ import (
 
 	"github.com/ayushkunwarsingh/forge/auth"
 	"github.com/ayushkunwarsingh/forge/config"
+	"github.com/ayushkunwarsingh/forge/database"
 	"github.com/ayushkunwarsingh/forge/logger"
 	"github.com/ayushkunwarsingh/forge/server"
 )
@@ -121,12 +122,34 @@ func main() {
 		})
 	}
 
+	// ── Database Service ────────────────────────────────────────────
+
+	var dbEngine *database.Engine
+	if cfg.Database.Enabled {
+		dbEngine, err = database.NewEngine(cfg, log)
+		if err != nil {
+			log.Fatal("Failed to initialize database engine", logger.Fields{
+				"error": err.Error(),
+			})
+		}
+
+		// Register database routes
+		database.RegisterRoutes(router, dbEngine)
+
+		log.Info("Database service registered", logger.Fields{
+			"endpoints": "CRUD, query, batch, transaction, indexes, snapshot",
+		})
+	}
+
 	// ── Health & Info Endpoints ──────────────────────────────────────
 
 	router.GET("/health", func(ctx *server.Context) {
 		services := map[string]string{}
 		if authService != nil {
 			services["auth"] = "ok"
+		}
+		if dbEngine != nil {
+			services["database"] = "ok"
 		}
 
 		ctx.JSON(200, map[string]interface{}{
