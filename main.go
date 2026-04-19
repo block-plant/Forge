@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ayushkunwarsingh/forge/auth"
 	"github.com/ayushkunwarsingh/forge/config"
 	"github.com/ayushkunwarsingh/forge/logger"
 	"github.com/ayushkunwarsingh/forge/server"
@@ -94,14 +95,46 @@ func main() {
 		router.Use(server.CORSMiddleware(corsConfig))
 	}
 
+	// ── Auth Service ────────────────────────────────────────────────
+
+	var authService *auth.Service
+	if cfg.Auth.Enabled {
+		authService, err = auth.NewService(cfg, log)
+		if err != nil {
+			log.Fatal("Failed to initialize auth service", logger.Fields{
+				"error": err.Error(),
+			})
+		}
+
+		// Add JWT verification middleware (runs on all routes)
+		router.Use(auth.Middleware(authService.JWTManager()))
+
+		// Register auth routes
+		auth.RegisterRoutes(router, authService)
+
+		// Register OAuth routes if configured
+		baseURL := fmt.Sprintf("http://%s:%d", cfg.Server.Host, cfg.Server.Port)
+		auth.RegisterOAuthRoutes(router, authService, baseURL)
+
+		log.Info("Auth service registered", logger.Fields{
+			"endpoints": "signup, signin, refresh, me, jwks, admin",
+		})
+	}
+
 	// ── Health & Info Endpoints ──────────────────────────────────────
 
 	router.GET("/health", func(ctx *server.Context) {
+		services := map[string]string{}
+		if authService != nil {
+			services["auth"] = "ok"
+		}
+
 		ctx.JSON(200, map[string]interface{}{
 			"status":    "ok",
 			"service":   "forge",
 			"version":   "0.1.0",
 			"timestamp": time.Now().UTC().Format(time.RFC3339),
+			"services":  services,
 		})
 	})
 
