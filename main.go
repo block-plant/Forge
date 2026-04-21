@@ -12,9 +12,13 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ayushkunwarsingh/forge/analytics"
 	"github.com/ayushkunwarsingh/forge/auth"
 	"github.com/ayushkunwarsingh/forge/config"
+	"github.com/ayushkunwarsingh/forge/dashboard"
 	"github.com/ayushkunwarsingh/forge/database"
+	"github.com/ayushkunwarsingh/forge/functions"
+	"github.com/ayushkunwarsingh/forge/hosting"
 	"github.com/ayushkunwarsingh/forge/logger"
 	"github.com/ayushkunwarsingh/forge/realtime"
 	"github.com/ayushkunwarsingh/forge/rules"
@@ -212,6 +216,74 @@ func main() {
 		})
 	}
 
+	// ── Functions Service ─────────────────────────────────────────
+
+	var funcService *functions.Service
+	if cfg.Functions.Enabled {
+		funcService, err = functions.NewService(cfg, log)
+		if err != nil {
+			log.Fatal("Failed to initialize functions service", logger.Fields{
+				"error": err.Error(),
+			})
+		}
+
+		functions.RegisterRoutes(router, funcService)
+		funcService.Start()
+
+		log.Info("Functions service registered", logger.Fields{
+			"endpoints": "deploy, list, get, delete, invoke, schedules",
+		})
+	}
+
+	// ── Hosting Service ──────────────────────────────────────────
+
+	var hostingServer *hosting.Server
+	if cfg.Hosting.Enabled {
+		hostingServer, err = hosting.NewServer(cfg, log)
+		if err != nil {
+			log.Fatal("Failed to initialize hosting service", logger.Fields{
+				"error": err.Error(),
+			})
+		}
+
+		hostingDeployer := hosting.NewDeployer(cfg, log, hostingServer)
+		hosting.RegisterRoutes(router, hostingServer, hostingDeployer)
+
+		log.Info("Hosting service registered", logger.Fields{
+			"endpoints": "deploy, sites, serve, cache",
+		})
+	}
+
+	// ── Analytics Service ────────────────────────────────────────
+
+	var analyticsEngine *analytics.Engine
+	if cfg.Analytics.Enabled {
+		analyticsEngine, err = analytics.NewEngine(cfg, log)
+		if err != nil {
+			log.Fatal("Failed to initialize analytics service", logger.Fields{
+				"error": err.Error(),
+			})
+		}
+
+		analytics.RegisterRoutes(router, analyticsEngine)
+
+		log.Info("Analytics service registered", logger.Fields{
+			"endpoints": "track, batch, stats",
+		})
+	}
+
+	// ── Admin Dashboard ──────────────────────────────────────────
+
+	if err := dashboard.RegisterRoutes(router); err != nil {
+		log.Fatal("Failed to initialize dashboard", logger.Fields{
+			"error": err.Error(),
+		})
+	}
+
+	log.Info("Admin dashboard registered", logger.Fields{
+		"path": "/dashboard/",
+	})
+
 	// ── Health & Info Endpoints ──────────────────────────────────────
 
 	router.GET("/health", func(ctx *server.Context) {
@@ -225,6 +297,15 @@ func main() {
 		services["realtime"] = "ok"
 		if storageEngine != nil {
 			services["storage"] = "ok"
+		}
+		if funcService != nil {
+			services["functions"] = "ok"
+		}
+		if hostingServer != nil {
+			services["hosting"] = "ok"
+		}
+		if analyticsEngine != nil {
+			services["analytics"] = "ok"
 		}
 
 		ctx.JSON(200, map[string]interface{}{
@@ -256,6 +337,11 @@ func main() {
 	go func() {
 		<-quit
 		log.Info("Received shutdown signal")
+		
+		if analyticsEngine != nil {
+			analyticsEngine.Shutdown()
+		}
+
 		if err := srv.Shutdown(30 * time.Second); err != nil {
 			log.Error("Shutdown error", logger.Fields{"error": err.Error()})
 		}

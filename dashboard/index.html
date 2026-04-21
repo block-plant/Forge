@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Forge Dashboard</title>
+  <link rel="stylesheet" href="/dashboard/style.css">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="background-mesh"></div>
+
+  <nav class="glass-header">
+    <div class="logo">
+      <div class="flame-icon">🔥</div>
+      Forge <span>Platform</span>
+    </div>
+    <div class="nav-links">
+      <a href="#" class="active" data-page="overview">Overview</a>
+      <a href="#" data-page="auth">Auth</a>
+      <a href="#" data-page="database">Database</a>
+      <a href="#" data-page="analytics">Analytics</a>
+      <a href="#" data-page="settings">Settings</a>
+    </div>
+    <div class="user-profile">
+      <div class="avatar">A</div>
+    </div>
+  </nav>
+
+  <main class="dashboard-content">
+
+    <!-- ════ OVERVIEW PAGE ════ -->
+    <section id="page-overview" class="page active-page">
+      <header class="page-header">
+        <h1>System Overview</h1>
+        <p>Real-time telemetry and health status of your Forge backend.</p>
+      </header>
+
+      <div class="metrics-grid">
+        <div class="glass-card metric-card">
+          <div class="metric-icon green">⚡</div>
+          <div class="metric-info">
+            <h3>Server Status</h3>
+            <h2 id="server-status" class="status-online">Online</h2>
+          </div>
+        </div>
+        <div class="glass-card metric-card">
+          <div class="metric-icon purple">📦</div>
+          <div class="metric-info">
+            <h3>Runtime Version</h3>
+            <h2 id="server-version">v0.1.0</h2>
+          </div>
+        </div>
+        <div class="glass-card metric-card">
+          <div class="metric-icon blue">📊</div>
+          <div class="metric-info">
+            <h3>Analytics Buffer</h3>
+            <h2 id="analytics-buffer">0 / 10k</h2>
+          </div>
+        </div>
+      </div>
+
+      <div class="services-section">
+        <h2>Active Services</h2>
+        <div class="services-list glass-card" id="services-list"></div>
+      </div>
+    </section>
+
+    <!-- ════ AUTH PAGE ════ -->
+    <section id="page-auth" class="page">
+      <header class="page-header">
+        <h1>Authentication</h1>
+        <p>Manage users, view sign-up activity, and configure auth providers.</p>
+      </header>
+
+      <div class="metrics-grid">
+        <div class="glass-card metric-card">
+          <div class="metric-icon green">👥</div>
+          <div class="metric-info">
+            <h3>Total Users</h3>
+            <h2 id="auth-total-users">—</h2>
+          </div>
+        </div>
+        <div class="glass-card metric-card">
+          <div class="metric-icon purple">📈</div>
+          <div class="metric-info">
+            <h3>Signups Today</h3>
+            <h2 id="auth-signups-today">—</h2>
+          </div>
+        </div>
+        <div class="glass-card metric-card">
+          <div class="metric-icon blue">🔑</div>
+          <div class="metric-info">
+            <h3>Active Sessions</h3>
+            <h2 id="auth-sessions">—</h2>
+          </div>
+        </div>
+      </div>
+
+      <div class="glass-card" style="margin-top:1.5rem">
+        <h3 style="margin-bottom:1rem">Recent Users</h3>
+        <div id="auth-users-list" class="data-table-container">
+          <p class="text-muted">Loading users...</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ════ DATABASE PAGE ════ -->
+    <section id="page-database" class="page">
+      <header class="page-header">
+        <h1>Database Browser</h1>
+        <p>Browse collections, inspect documents, and run queries.</p>
+      </header>
+
+      <div class="metrics-grid">
+        <div class="glass-card metric-card">
+          <div class="metric-icon green">📁</div>
+          <div class="metric-info">
+            <h3>Collections</h3>
+            <h2 id="db-collections-count">—</h2>
+          </div>
+        </div>
+        <div class="glass-card metric-card">
+          <div class="metric-icon purple">📄</div>
+          <div class="metric-info">
+            <h3>Total Documents</h3>
+            <h2 id="db-documents-count">—</h2>
+          </div>
+        </div>
+        <div class="glass-card metric-card">
+          <div class="metric-icon blue">💾</div>
+          <div class="metric-info">
+            <h3>WAL Sequence</h3>
+            <h2 id="db-wal-seq">—</h2>
+          </div>
+        </div>
+      </div>
+
+      <div class="glass-card" style="margin-top:1.5rem">
+        <h3 style="margin-bottom:1rem">Collections</h3>
+        <div id="db-collections-list" class="data-table-container">
+          <p class="text-muted">Loading collections...</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ════ ANALYTICS PAGE ════ -->
+    <section id="page-analytics" class="page">
+      <header class="page-header">
+        <h1>Analytics</h1>
+        <p>Event tracking, time-series data, and usage metrics.</p>
+      </header>
+
+      <div class="metrics-grid">
+        <div class="glass-card metric-card">
+          <div class="metric-icon green">📊</div>
+          <div class="metric-info">
+            <h3>Events Today</h3>
+            <h2 id="analytics-events-today">—</h2>
+          </div>
+        </div>
+        <div class="glass-card metric-card">
+          <div class="metric-icon purple">🔥</div>
+          <div class="metric-info">
+            <h3>Top Event</h3>
+            <h2 id="analytics-top-event">—</h2>
+          </div>
+        </div>
+        <div class="glass-card metric-card">
+          <div class="metric-icon blue">📁</div>
+          <div class="metric-info">
+            <h3>Log Days</h3>
+            <h2 id="analytics-log-days">—</h2>
+          </div>
+        </div>
+      </div>
+
+      <div class="glass-card" style="margin-top:1.5rem">
+        <h3 style="margin-bottom:1rem">Event Counters</h3>
+        <div id="analytics-counters" class="data-table-container">
+          <p class="text-muted">Loading analytics...</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ════ SETTINGS PAGE ════ -->
+    <section id="page-settings" class="page">
+      <header class="page-header">
+        <h1>Settings</h1>
+        <p>Server configuration and project settings.</p>
+      </header>
+
+      <div class="glass-card" style="margin-top:1rem">
+        <h3 style="margin-bottom:1rem">Server Information</h3>
+        <div id="settings-info" class="settings-grid">
+          <p class="text-muted">Loading server info...</p>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <script src="/dashboard/app.js"></script>
+</body>
+</html>

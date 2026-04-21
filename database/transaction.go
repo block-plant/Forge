@@ -5,6 +5,12 @@ import (
 	"sync"
 )
 
+const (
+	OpSet    = "SET"
+	OpUpdate = "UPDATE"
+	OpDelete = "DELETE"
+)
+
 // Transaction represents an atomic batch of read-modify-write operations.
 // Uses optimistic concurrency control — reads snapshot versions, and
 // the commit fails if any document was modified between read and write.
@@ -44,7 +50,7 @@ func (tx *Transaction) Get(collection, docID string) (*Document, error) {
 		return nil, fmt.Errorf("transaction: already completed")
 	}
 
-	doc := tx.engine.store.GetCollection(collection).Get(docID)
+	doc := tx.engine.GetDocument(collection, docID)
 
 	// Record the version we read
 	if _, ok := tx.reads[collection]; !ok {
@@ -140,9 +146,8 @@ func (tx *Transaction) Commit() error {
 
 	// Phase 1: Validate reads (optimistic concurrency check)
 	for collection, docs := range tx.reads {
-		tree := tx.engine.store.GetCollection(collection)
 		for docID, readVersion := range docs {
-			current := tree.Get(docID)
+			current := tx.engine.GetDocument(collection, docID)
 			if current == nil && readVersion != 0 {
 				tx.aborted = true
 				return fmt.Errorf("transaction: conflict — document %s/%s was deleted", collection, docID)

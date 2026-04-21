@@ -1,0 +1,159 @@
+:root {
+  --bg-color: #0b0f19;
+  --glass-bg: rgba(255, 255, 255, 0.03);
+  --glass-border: rgba(255, 255, 255, 0.08);
+  --text-main: #f1f5f9;
+  --text-muted: #94a3b8;
+
+  --accent-blue: #3b82f6;
+  --accent-purple: #8b5cf6;
+  --accent-green: #10b981;
+  --accent-red: #ef4444;
+  --accent-amber: #f59e0b;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: 'Inter', sans-serif;
+  background-color: var(--bg-color);
+  color: var(--text-main);
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+.background-mesh {
+  position: fixed; top: 0; left: 0;
+  width: 100vw; height: 100vh;
+  background:
+    radial-gradient(circle at 15% 50%, rgba(59, 130, 246, 0.12), transparent 25%),
+    radial-gradient(circle at 85% 30%, rgba(139, 92, 246, 0.12), transparent 25%),
+    radial-gradient(circle at 50% 80%, rgba(16, 185, 129, 0.08), transparent 30%);
+  z-index: -1; pointer-events: none;
+}
+
+/* ── Header ── */
+.glass-header {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 1rem 3rem;
+  background: var(--glass-bg);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--glass-border);
+  position: sticky; top: 0; z-index: 100;
+}
+
+.logo { font-size: 1.25rem; font-weight: 700; display: flex; align-items: center; gap: 0.5rem; }
+.logo span { font-weight: 400; color: var(--text-muted); }
+
+.nav-links { display: flex; gap: 2rem; }
+.nav-links a {
+  color: var(--text-muted); text-decoration: none; font-weight: 500; font-size: 0.95rem;
+  transition: color 0.2s; cursor: pointer; position: relative;
+}
+.nav-links a:hover, .nav-links a.active { color: var(--text-main); }
+.nav-links a.active::after {
+  content: ''; position: absolute; bottom: -4px; left: 0; right: 0;
+  height: 2px; background: var(--accent-blue); border-radius: 1px;
+}
+
+.avatar {
+  width: 32px; height: 32px; border-radius: 50%;
+  background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+  display: flex; align-items: center; justify-content: center;
+  font-size: 0.75rem; font-weight: 700; color: white;
+}
+
+/* ── Glass Card ── */
+.glass-card {
+  background: var(--glass-bg);
+  backdrop-filter: blur(16px);
+  border: 1px solid var(--glass-border);
+  border-radius: 16px; padding: 1.5rem;
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+.glass-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+/* ── Layout ── */
+.dashboard-content { max-width: 1200px; margin: 0 auto; padding: 3rem 1.5rem; }
+
+.page { display: none; }
+.page.active-page { display: block; animation: fadeIn 0.3s ease; }
+
+@keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+.page-header { margin-bottom: 2.5rem; }
+.page-header h1 {
+  font-size: 2.5rem; margin-bottom: 0.5rem;
+  background: linear-gradient(to right, #fff, #94a3b8);
+  -webkit-background-clip: text; color: transparent;
+}
+.page-header p { color: var(--text-muted); }
+
+/* ── Metrics Grid ── */
+.metrics-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.5rem; margin-bottom: 2rem; }
+.metric-card { display: flex; align-items: center; gap: 1.25rem; }
+.metric-icon {
+  width: 48px; height: 48px; border-radius: 12px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.5rem; background: rgba(255,255,255,0.05);
+}
+.metric-icon.green { color: var(--accent-green); text-shadow: 0 0 10px rgba(16, 185, 129, 0.5); }
+.metric-icon.purple { color: var(--accent-purple); text-shadow: 0 0 10px rgba(139, 92, 246, 0.5); }
+.metric-icon.blue { color: var(--accent-blue); text-shadow: 0 0 10px rgba(59, 130, 246, 0.5); }
+.metric-info h3 {
+  font-size: 0.8rem; color: var(--text-muted); font-weight: 500;
+  text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.25rem;
+}
+.metric-info h2 { font-size: 1.5rem; font-weight: 600; }
+.status-online { color: var(--accent-green); }
+
+/* ── Services List ── */
+.services-section h2 { font-size: 1.25rem; margin-bottom: 1rem; }
+.services-list { display: flex; flex-direction: column; gap: 8px; padding: 1rem; }
+.service-item {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 0.875rem 1.25rem; background: rgba(255,255,255,0.02);
+  border-radius: 8px; border: 1px solid transparent; transition: all 0.2s;
+}
+.service-item:hover { border-color: var(--glass-border); background: rgba(255,255,255,0.04); }
+.service-name { font-weight: 500; text-transform: capitalize; }
+.service-badge {
+  background: rgba(16, 185, 129, 0.1); color: var(--accent-green);
+  padding: 4px 10px; border-radius: 999px; font-size: 0.75rem; font-weight: 600;
+}
+
+/* ── Data Tables ── */
+.data-table-container { overflow-x: auto; }
+.data-table {
+  width: 100%; border-collapse: collapse; font-size: 0.875rem;
+}
+.data-table th {
+  text-align: left; padding: 0.75rem 1rem;
+  color: var(--text-muted); font-weight: 500; font-size: 0.75rem;
+  text-transform: uppercase; letter-spacing: 0.05em;
+  border-bottom: 1px solid var(--glass-border);
+}
+.data-table td {
+  padding: 0.75rem 1rem; border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+.data-table tr:hover td { background: rgba(255,255,255,0.02); }
+.text-muted { color: var(--text-muted); }
+
+/* ── Settings ── */
+.settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+.settings-item { display: flex; flex-direction: column; gap: 0.25rem; }
+.settings-item .label { font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+.settings-item .value { font-size: 1rem; font-weight: 500; }
+
+/* ── Responsive ── */
+@media (max-width: 768px) {
+  .glass-header { padding: 1rem; flex-direction: column; gap: 0.75rem; }
+  .nav-links { gap: 1rem; flex-wrap: wrap; justify-content: center; }
+  .metrics-grid { grid-template-columns: 1fr; }
+  .settings-grid { grid-template-columns: 1fr; }
+  .page-header h1 { font-size: 1.75rem; }
+}

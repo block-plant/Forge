@@ -19,8 +19,12 @@ type Config struct {
 	Database DatabaseConfig `json:"database"`
 	// Storage configuration
 	Storage StorageConfig `json:"storage"`
+	// Functions configuration
+	Functions FunctionsConfig `json:"functions"`
 	// Hosting configuration
 	Hosting HostingConfig `json:"hosting"`
+	// Analytics configuration
+	Analytics AnalyticsConfig `json:"analytics"`
 	// Logging configuration
 	Log LogConfig `json:"log"`
 	// Data directory (root for all persistent data)
@@ -90,14 +94,44 @@ type StorageConfig struct {
 	ChunkSize int `json:"chunk_size"`
 }
 
+// FunctionsConfig holds serverless functions settings.
+type FunctionsConfig struct {
+	// Enabled toggles the functions service (default: true)
+	Enabled bool `json:"enabled"`
+	// Timeout is the max execution time per function in seconds (default: 60)
+	Timeout int `json:"timeout"`
+	// MemoryLimit is the max memory per function in MB (default: 256)
+	MemoryLimit int `json:"memory_limit"`
+	// MaxConcurrent is the max number of concurrent function executions (default: 10)
+	MaxConcurrent int `json:"max_concurrent"`
+	// Runtime is the execution runtime: "node" or "script" (default: "script")
+	Runtime string `json:"runtime"`
+}
+
 // HostingConfig holds static hosting settings.
 type HostingConfig struct {
 	// Enabled toggles the hosting service (default: true)
 	Enabled bool `json:"enabled"`
 	// CacheSize is the max number of files in the in-memory cache (default: 1000)
 	CacheSize int `json:"cache_size"`
+	// CacheMaxFileSize is the max file size to cache in bytes (default: 1MB)
+	CacheMaxFileSize int64 `json:"cache_max_file_size"`
 	// EnableCompression enables Gzip compression (default: true)
 	EnableCompression bool `json:"enable_compression"`
+	// SPAMode enables single-page app fallback to index.html (default: true)
+	SPAMode bool `json:"spa_mode"`
+}
+
+// AnalyticsConfig holds analytics engine settings.
+type AnalyticsConfig struct {
+	// Enabled toggles the analytics service (default: true)
+	Enabled bool `json:"enabled"`
+	// BufferSize is the size of the event ingestion channel (default: 10000)
+	BufferSize int `json:"buffer_size"`
+	// FlushInterval is how often to flush events to disk (default: "5s")
+	FlushInterval string `json:"flush_interval"`
+	// RetentionDays is how long to keep analytics logs (0 = forever, default: 90)
+	RetentionDays int `json:"retention_days"`
 }
 
 // LogConfig holds logging settings.
@@ -142,10 +176,25 @@ func DefaultConfig() *Config {
 			MaxFileSize: 100 * 1024 * 1024, // 100MB
 			ChunkSize:   256 * 1024,         // 256KB
 		},
+		Functions: FunctionsConfig{
+			Enabled:       true,
+			Timeout:       60,
+			MemoryLimit:   256,
+			MaxConcurrent: 10,
+			Runtime:       "script",
+		},
 		Hosting: HostingConfig{
 			Enabled:           true,
 			CacheSize:         1000,
+			CacheMaxFileSize:  1024 * 1024, // 1MB
 			EnableCompression: true,
+			SPAMode:           true,
+		},
+		Analytics: AnalyticsConfig{
+			Enabled:       true,
+			BufferSize:    10000,
+			FlushInterval: "5s",
+			RetentionDays: 90,
 		},
 		Log: LogConfig{
 			Level:  "info",
@@ -202,9 +251,7 @@ func (c *Config) EnsureDataDirs() error {
 		c.DataDir,
 		c.ResolveDataPath("auth"),
 		c.ResolveDataPath("auth", "tokens"),
-		c.ResolveDataPath(c.Database.WALDir),
-		c.ResolveDataPath(c.Database.SnapshotDir),
-		c.ResolveDataPath("database", "indexes"),
+		c.ResolveDataPath("dynamicdb"),
 		c.ResolveDataPath("storage", "objects"),
 		c.ResolveDataPath("storage", "metadata"),
 		c.ResolveDataPath("functions", "bundles"),

@@ -1,4 +1,68 @@
-forge
-forge-data/
-*.pem
+# ─────────────────────────────────────────────────────────────────
+# Forge — .gitignore
+# ─────────────────────────────────────────────────────────────────
 
+# ── Compiled Binaries ──────────────────────────────────────────
+# Go build outputs — never commit compiled binaries
+forge
+forge-cli
+*.exe
+*.out
+
+# ── Runtime Data (CRITICAL — contains user data, keys, DB) ────
+forge-data/
+
+# ── Cryptographic Keys & Secrets ──────────────────────────────
+*.pem
+*.key
+*.crt
+*.cert
+*.p12
+*.pfx
+*.jks
+
+# ── Configuration Overrides with Secrets ──────────────────────
+# The default forge.json is safe (no secrets), but production
+# configs with OAuth secrets or custom keys must never be committed.
+forge.prod.json
+forge.production.json
+forge.staging.json
+forge.local.json
+*.secret.json
+
+# ── Environment Files ─────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── OS & Editor Artifacts ─────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.vscode/settings.json
+.idea/
+
+# ── Go Artifacts ──────────────────────────────────────────────
+vendor/
+*.test
+coverage.out
+coverage.html
+cpu.prof
+mem.prof
+
+# ── Node / SDK Artifacts ──────────────────────────────────────
+node_modules/
+sdk/node_modules/
+sdk/dist/
+sdk/.turbo/
+*.tgz
+package-lock.json
+
+# ── Logs ──────────────────────────────────────────────────────
+*.log
+logs/
+
+# ── Code Review Graph (Antigravity tooling) ───────────────────
+.code-review-graph/
