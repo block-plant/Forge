@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# ═══════════════════════════════════════════════════
+# Forge — Update All Projects
+# Recompiles the latest binary and redeploys it to
+# every running Forge instance on the Oracle server.
+# This ensures style/dashboard changes propagate to
+# ALL child projects, even those created before the changes.
+# ═══════════════════════════════════════════════════
+
+set -e
+
+SERVER_IP="80.225.199.57"
+SERVER_USER="ubuntu"
+
+echo "🔥 Building Forge for Linux AMD64..."
+GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o forge ./main.go
+
+echo "📦 Transporting binary to server..."
+scp forge $SERVER_USER@$SERVER_IP:/tmp/forge-update
+
+echo "🔄 Updating all Forge instances on $SERVER_IP..."
+
+ssh -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_IP << 'EOF'
+
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo "  Scanning for running Forge services..."
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+  UPDATED=0
+  FAILED=0
+
+  # Find all forge-* systemd services
+  for SERVICE in $(systemctl list-units --type=service --state=running --no-legend | grep "^forge" | awk '{print $1}'); do
+    SLUG=$(echo "$SERVICE" | sed 's/forge-//' | sed 's/\.service//')
+    APP_DIR="/opt/forge/projects/$SLUG"
+
+    # Also handle the main admin forge instance
+    if [ "$SERVICE" = "forge.service" ]; then
+      APP_DIR="/opt/forge"
+    fi
+
+    if [ -d "$APP_DIR" ]; then
+      echo ""
+      echo "🔄 Updating: $SERVICE"
+      echo "   Directory: $APP_DIR"
+
+      # Copy new binary
+      sudo cp /tmp/forge-update "$APP_DIR/forge"
+      sudo chmod +x "$APP_DIR/forge"
+
+      # Restart the service
+      sudo systemctl restart "$SERVICE"
+
+      # Check if it came back online
+      sleep 1
+      if systemctl is-active --quiet "$SERVICE"; then
+        echo "   ✅ $SERVICE restarted successfully"
+        UPDATED=$((UPDATED+1))
+      else
+        echo "   ❌ $SERVICE failed to restart!"
+        FAILED=$((FAILED+1))
+      fi
+    else
+      echo "⚠️  Skipping $SERVICE — directory $APP_DIR not found"
+    fi
+  done
+
+  # Cleanup
+  rm -f /tmp/forge-update
+
+  echo ""
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo "  ✅ Updated: $UPDATED services"
+  if [ "$FAILED" -gt 0 ]; then
+    echo "  ❌ Failed:  $FAILED services"
+  fi
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+EOF
+
+# Cleanup local binary
+rm -f forge
+
+echo ""
+echo "🚀 All Forge instances updated with the latest dashboard!"
+echo "   Admin Console: http://$SERVER_IP:8080/dashboard"

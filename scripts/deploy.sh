@@ -15,29 +15,32 @@ SERVER_USER="ubuntu"  # Change to 'root' if using DigitalOcean
 CONFIG_FILE="forge.prod.json"
 RULES_FILE="forge.rules"
 
-echo "🔥 Building Forge for Linux ARM64..."
-# NOTE: If using Intel/AMD CPUs (like standard DigitalOcean droplet), change GOARCH to amd64
-GOOS=linux GOARCH=arm64 go build -ldflags="-w -s" -o forge ./main.go
+echo "🔥 Building Forge for Linux AMD64 (x86_64)..."
+# Using amd64 for the VM.Standard.E2.1.Micro AMD instance
+GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o forge ./main.go
 
-echo "🔥 Deploying to $SERVER_USER@$SERVER_IP..."
+echo "🔥 Transporting files to $SERVER_USER@$SERVER_IP..."
 
-# Set up required directories on the server
-ssh $SERVER_USER@$SERVER_IP << EOF
-  sudo mkdir -p /opt/forge
-  sudo chown -R $SERVER_USER:$SERVER_USER /opt/forge
-  sudo mkdir -p /var/lib/forge-data
-  sudo chown -R $SERVER_USER:$SERVER_USER /var/lib/forge-data
-EOF
-
-# Copy binary, config, and systemd service
-scp forge $SERVER_USER@$SERVER_IP:/opt/forge/
-scp $CONFIG_FILE $SERVER_USER@$SERVER_IP:/opt/forge/forge.json
-scp $RULES_FILE $SERVER_USER@$SERVER_IP:/opt/forge/forge.rules
-scp scripts/forge.service $SERVER_USER@$SERVER_IP:/tmp/
+# Copy binary, config, systemd service, and frontend dashboard
+scp -r ./forge ./forge.prod.json ./forge.rules ./scripts/forge.service ./dashboard $SERVER_USER@$SERVER_IP:~/
 
 echo "🔥 Installing and Restarting Forge service..."
 ssh $SERVER_USER@$SERVER_IP << EOF
-  sudo mv /tmp/forge.service /etc/systemd/system/forge.service
+  # Setup engine
+  sudo mkdir -p /opt/forge
+  sudo mv ~/forge /opt/forge/
+  sudo mv ~/forge.prod.json /opt/forge/forge.json
+  sudo mv ~/forge.rules /opt/forge/
+  sudo chown -R $SERVER_USER:$SERVER_USER /opt/forge
+  
+  # Setup database and hosting folders
+  sudo mkdir -p /var/lib/forge-data/hosting/projects
+  sudo rm -rf /var/lib/forge-data/hosting/projects/dashboard
+  sudo mv ~/dashboard /var/lib/forge-data/hosting/projects/
+  sudo chown -R $SERVER_USER:$SERVER_USER /var/lib/forge-data
+
+  # Reload daemon
+  sudo mv ~/forge.service /etc/systemd/system/forge.service
   sudo systemctl daemon-reload
   sudo systemctl enable forge
   sudo systemctl restart forge

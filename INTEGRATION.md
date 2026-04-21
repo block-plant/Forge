@@ -42,7 +42,20 @@ Verify: `curl http://localhost:8080/health` → should return `{ "status": "ok" 
 
 ---
 
-## Step 2: Connect From Your Project
+## Step 2: Multi-Project Provisioning (Cloud Environments)
+
+If Forge is running on a cloud server (like Oracle Free Tier), you can host an infinite number of isolated projects from a single server. Each project gets its own dedicated data folder, isolated users, and background daemon, running on a unique port.
+
+To provision a new project:
+1. Open a terminal in your Forge repository.
+2. Run the helper script: `./run-my-backend "My Project"`
+3. The script will automatically find a free port (e.g. `8081`), configure the folders, and start the daemon.
+
+When interacting with this specific project from a frontend codebase, you MUST point your SDK endpoint to that specific newly generated port.
+
+---
+
+## Step 3: Connect From Your Project
 
 ### Option A: Use the TypeScript SDK
 

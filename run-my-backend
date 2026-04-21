@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+
+if [ -z "$1" ]; then
+  echo "❌ You must provide a project name!"
+  echo "Example: ./run-my-backend \"Chat App\""
+  exit 1
+fi
+
+PROJECT_NAME=$1
+# Convert to lowercase and replace spaces with hyphens (e.g. "Chat App" -> "chat-app")
+PROJECT_SLUG=$(echo "$PROJECT_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/ /-/g')
+
+SERVER_IP="80.225.199.57"
+SERVER_USER="ubuntu"
+
+echo "🔥 Building Forge for Linux AMD64..."
+GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o forge ./main.go
+
+echo "🔍 Finding an available port and deploying $PROJECT_NAME..."
+
+# We pass PROJECT_SLUG and PROJECT_NAME into the remote script cleanly as arguments
+ssh -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_IP "bash -s" -- "$PROJECT_SLUG" "$PROJECT_NAME" << 'EOF'
+
+  # $1 is PROJECT_SLUG, $2 is PROJECT_NAME safely from local machine
+  SLUG="$1"
+  NAME="$2"
+
+  # Find first available port
+  PORT=8081
+  while ss -tuln | grep -q ":$PORT " ; do
+    PORT=$((PORT+1))
+  done
+
+  if [ "$PORT" -gt 8100 ]; then
+    echo "❌ No available ports between 8081 and 8100. Please open more ports in Oracle."
+    exit 1
+  fi
+
+  echo "✅ Found available port: $PORT"
+
+  # Setup project folders
+  APP_DIR="/opt/forge/projects/$SLUG"
+  DATA_DIR="/var/lib/forge-data/$SLUG"
+  
+  sudo mkdir -p "$APP_DIR"
+  sudo mkdir -p "$DATA_DIR"
+  sudo chown -R ubuntu:ubuntu "$APP_DIR" "$DATA_DIR"
+
+  # Generate isolated config
+  cat <<JSON > ~/forge.json
+{
+  "server": {
+    "host": "0.0.0.0",
+    "port": $PORT,
+    "enable_cors": true,
+    "cors_origins": ["*"]
+  },
+  "auth": { "enabled": true },
+  "database": { "enabled": true },
+  "storage": { "enabled": true },
+  "hosting": { "enabled": true },
+  "functions": { "enabled": true },
+  "analytics": { "enabled": true },
+  "data_dir": "$DATA_DIR"
+}
+JSON
+
+  sudo mv ~/forge.json "$APP_DIR/forge.json"
+
+  # Generate systemd service for this specific project
+  cat <<SERVICE > ~/forge-$SLUG.service
+[Unit]
+Description=Forge BaaS - $NAME
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=$APP_DIR
+ExecStart=$APP_DIR/forge --config $APP_DIR/forge.json
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+SERVICE
+
+  sudo mv ~/forge-$SLUG.service /etc/systemd/system/forge-$SLUG.service
+EOF
+
+# Transport the binary to the isolated folder
+scp forge $SERVER_USER@$SERVER_IP:/tmp/forge
+
+ssh -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_IP "bash -s" -- "$PROJECT_SLUG" "$PROJECT_NAME" << 'EOF'
+  SLUG="$1"
+  NAME="$2"
+
+  sudo mv /tmp/forge /opt/forge/projects/$SLUG/forge
+  sudo chmod +x /opt/forge/projects/$SLUG/forge
+  sudo chown root:root /opt/forge/projects/$SLUG/forge
+
+  # Enable and start the daemon
+  sudo systemctl daemon-reload
+  sudo systemctl enable forge-$SLUG
+  sudo systemctl restart forge-$SLUG
+
+  # Extract the port securely using Python (cleaner than grep)
+  PORT=$(python3 -c "import json; print(json.load(open('/opt/forge/projects/$SLUG/forge.json'))['server']['port'])")
+  
+  # Ensure the internal firewall is open for this port
+  sudo iptables -I INPUT 1 -p tcp --dport $PORT -j ACCEPT
+  sudo netfilter-persistent save > /dev/null 2>&1
+
+  echo ""
+  echo "🚀 ==================================================="
+  echo "🎯 PROJECT LAUNCHED: $NAME"
+  echo "🌐 API Endpoint:  http://80.225.199.57:$PORT"
+  echo "🖥  Dashboard:    http://80.225.199.57:$PORT/dashboard"
+  echo "🛠  Daemon Name:  forge-$SLUG.service"
+  echo "🛡  Admin Panel:  http://80.225.199.57:8080/dashboard"
+  echo "🚀 ==================================================="
+EOF
