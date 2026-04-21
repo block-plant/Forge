@@ -1,16 +1,17 @@
 [Unit]
-Description=Forge Backend Platform
+Description=Forge BaaS Engine
 After=network.target
 
 [Service]
 Type=simple
 User=ubuntu
-WorkingDirectory=/home/ubuntu
-ExecStart=/home/ubuntu/forge serve --config forge.yaml
+WorkingDirectory=/opt/forge
+ExecStart=/opt/forge/forge --config /opt/forge/forge.json
 Restart=always
 RestartSec=5
 LimitNOFILE=65536
 Environment="FORGE_ENV=production"
+Environment="FORGE_DATA_DIR=/var/lib/forge-data"
 
 [Install]
 WantedBy=multi-user.target

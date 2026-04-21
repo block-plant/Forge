@@ -1,0 +1,44 @@
+{
+  "server": {
+    "host": "0.0.0.0",
+    "port": 8080,
+    "enable_cors": true,
+    "cors_origins": ["https://your-frontend-domain.com", "http://localhost:3000"],
+    "max_body_size": 52428800
+  },
+  "auth": {
+    "enabled": true,
+    "token_expiry": "1h",
+    "refresh_expiry": "720h",
+    "bcrypt_cost": 12
+  },
+  "database": {
+    "enabled": true,
+    "snapshot_interval": "10m",
+    "max_transaction_size": 500
+  },
+  "storage": {
+    "enabled": true,
+    "max_file_size": 209715200
+  },
+  "functions": {
+    "enabled": true,
+    "timeout": 30,
+    "max_concurrent": 20,
+    "runtime": "script"
+  },
+  "hosting": {
+    "enabled": true,
+    "spa_mode": true,
+    "enable_compression": true
+  },
+  "analytics": {
+    "enabled": true,
+    "retention_days": 365
+  },
+  "log": {
+    "level": "info",
+    "pretty": false
+  },
+  "data_dir": "/var/lib/forge-data"
+}
