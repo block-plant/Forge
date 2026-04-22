@@ -1,4 +1,4 @@
-# 📖 Forge: The "Simple English" Manual
+# 📖 Forge: The Manual
 
 Welcome to the Forge documentation! If you're reading this, you probably want to know how this massive Backend-as-a-Service (BaaS) actually works under the hood.
 
