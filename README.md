@@ -92,7 +92,7 @@ go build -o forge main.go
 
 We believe documentation should be beautiful, simple, and actually helpful.
 
-- 📖 **[The "Simple English" Manual](./DOCUMENTATION.md)** — We explain complex computer science (like B-Trees and Mutex Locks) using real-world analogies (like Filing Cabinets and Apartment Buildings).
+- 📖 **[The English Manual](./DOCUMENTATION.md)** — We explain complex computer science (like B-Trees and Mutex Locks) using real-world analogies (like Filing Cabinets and Apartment Buildings).
 - 🤖 **[The AI Integration Guide](./INTEGRATION.md)** — A highly detailed API contract document specifically designed to be copy-pasted into ChatGPT, Cursor, or Copilot so the AI knows exactly how to connect your frontend to Forge.
 
 ## 🤝 REST API Teaser
