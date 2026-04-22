@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Forge | Secure Auth</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="background-mesh"></div>
+    
+    <div class="auth-container">
+        <!-- Logo -->
+        <div class="auth-header">
+            <div class="brand-icon">F</div>
+            <h1>Forge <span>Console</span></h1>
+        </div>
+
+        <!-- Signup Form -->
+        <div id="signup-view" class="auth-card active">
+            <h2>Create Account <span class="info-tip tip-down" data-tip="Create a new user for this Forge project. Your credentials are stored securely with bcrypt hashing.">i</span></h2>
+            <p>Enter your details to start building.</p>
+            <div class="input-group">
+                <label>Email Address <span class="info-tip tip-right" data-tip="Your email is used for login and OTP verification. Must be a valid email format.">i</span></label>
+                <input type="email" id="signup-email" placeholder="you@example.com">
+            </div>
+            <div class="input-group">
+                <label>Password <span class="info-tip tip-right" data-tip="Minimum 6 characters. Stored as a bcrypt hash — never in plain text.">i</span></label>
+                <input type="password" id="signup-password" placeholder="••••••••">
+            </div>
+            <button class="primary-btn" id="signup-btn">Sign Up</button>
+            <p class="auth-footer">Already have an account? <a href="#" onclick="showView('login')">Log In</a></p>
+        </div>
+
+        <!-- OTP Verification -->
+        <div id="otp-view" class="auth-card">
+            <h2>Verify Email <span class="info-tip tip-down" data-tip="A 6-digit one-time code was sent to your email. Enter it below to activate your account.">i</span></h2>
+            <p>We've sent a 6-digit code to <strong id="verify-email-display">your email</strong>.</p>
+            <div class="otp-grid">
+                <input type="text" maxlength="1" class="otp-input" data-index="0">
+                <input type="text" maxlength="1" class="otp-input" data-index="1">
+                <input type="text" maxlength="1" class="otp-input" data-index="2">
+                <input type="text" maxlength="1" class="otp-input" data-index="3">
+                <input type="text" maxlength="1" class="otp-input" data-index="4">
+                <input type="text" maxlength="1" class="otp-input" data-index="5">
+            </div>
+            <button class="primary-btn" id="verify-btn">Verify Account</button>
+            <p class="auth-footer">Didn't receive code? <a href="#">Resend</a></p>
+        </div>
+
+        <!-- Login Form -->
+        <div id="login-view" class="auth-card">
+            <h2>Welcome Back <span class="info-tip tip-down" data-tip="Sign in with the email and password you used during signup.">i</span></h2>
+            <p>Log in to your project instance.</p>
+            <div class="input-group">
+                <label>Email Address</label>
+                <input type="email" id="login-email" placeholder="you@example.com">
+            </div>
+            <div class="input-group">
+                <label>Password</label>
+                <input type="password" id="login-password" placeholder="••••••••">
+            </div>
+            <button class="primary-btn" id="login-btn">Log In</button>
+            <p class="auth-footer">Forgot password? <a href="#" onclick="showView('forgot')">Recover</a></p>
+            <p class="auth-footer">Need an account? <a href="#" onclick="showView('signup')">Sign Up</a></p>
+        </div>
+
+        <!-- Forgot Password -->
+        <div id="forgot-view" class="auth-card">
+            <h2>Reset Password <span class="info-tip tip-down" data-tip="We'll send a reset code to your email. Use it on the next screen to set a new password.">i</span></h2>
+            <p>Enter your email to receive a recovery code.</p>
+            <div class="input-group">
+                <label>Email Address</label>
+                <input type="email" id="forgot-email" placeholder="you@example.com">
+            </div>
+            <button class="primary-btn" id="forgot-btn">Send Reset Code</button>
+            <p class="auth-footer">Back to <a href="#" onclick="showView('login')">Login</a></p>
+        </div>
+
+        <!-- New Password -->
+        <div id="reset-view" class="auth-card">
+            <h2>New Password</h2>
+            <p>Enter the code and your new password.</p>
+            <div class="input-group">
+                <label>Reset Code</label>
+                <input type="text" id="reset-code" placeholder="6-digit code">
+            </div>
+            <div class="input-group">
+                <label>New Password</label>
+                <input type="password" id="reset-password" placeholder="••••••••">
+            </div>
+            <button class="primary-btn" id="reset-btn">Update Password</button>
+        </div>
+    </div>
+
+    <div id="toast-container"></div>
+    <script src="app.js"></script>
+</body>
+</html>

@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"github.com/ayushkunwarsingh/forge/logger"
 	"github.com/ayushkunwarsingh/forge/server"
 )
 
@@ -12,6 +13,9 @@ func RegisterRoutes(router *server.Router, svc *Service) {
 	auth.POST("/signup", handleSignup(svc))
 	auth.POST("/signin", handleSignin(svc))
 	auth.POST("/refresh", handleRefresh(svc))
+	auth.POST("/verify-email", handleVerifyEmail(svc))
+	auth.POST("/forgot-password", handleForgotPassword(svc))
+	auth.POST("/reset-password", handleResetPassword(svc))
 
 	// JWKS public key endpoint
 	auth.GET("/.well-known/jwks.json", handleJWKS(svc))
@@ -328,6 +332,84 @@ func handleAdminDeleteUser(svc *Service) server.HandlerFunc {
 
 		ctx.JSON(200, map[string]interface{}{
 			"message": "User deleted successfully",
+		})
+	}
+}
+
+// handleVerifyEmail handles POST /auth/verify-email
+func handleVerifyEmail(svc *Service) server.HandlerFunc {
+	return func(ctx *server.Context) {
+		var req struct {
+			Email string `json:"email"`
+			Code  string `json:"code"`
+		}
+		if err := ctx.BindJSON(&req); err != nil {
+			ctx.Error(400, "Invalid request body")
+			return
+		}
+
+		if err := svc.VerifyOTP(req.Email, req.Code, "signup"); err != nil {
+			ctx.Error(401, err.Error())
+			return
+		}
+
+		ctx.JSON(200, map[string]interface{}{
+			"message": "Email verified successfully",
+		})
+	}
+}
+
+// handleForgotPassword handles POST /auth/forgot-password
+func handleForgotPassword(svc *Service) server.HandlerFunc {
+	return func(ctx *server.Context) {
+		var req struct {
+			Email string `json:"email"`
+		}
+		if err := ctx.BindJSON(&req); err != nil {
+			ctx.Error(400, "Invalid request body")
+			return
+		}
+
+		if err := svc.RequestPasswordReset(req.Email); err != nil {
+			// Log the actual error for debugging
+			svc.log.Error("Failed to send password reset email", logger.Fields{
+				"email": req.Email,
+				"error": err.Error(),
+			})
+
+			// Don't leak user existence
+			ctx.JSON(200, map[string]interface{}{
+				"message": "If this email exists, a reset code has been sent.",
+			})
+			return
+		}
+
+		ctx.JSON(200, map[string]interface{}{
+			"message": "Reset code sent to email",
+		})
+	}
+}
+
+// handleResetPassword handles POST /auth/reset-password
+func handleResetPassword(svc *Service) server.HandlerFunc {
+	return func(ctx *server.Context) {
+		var req struct {
+			Email       string `json:"email"`
+			Code        string `json:"code"`
+			NewPassword string `json:"new_password"`
+		}
+		if err := ctx.BindJSON(&req); err != nil {
+			ctx.Error(400, "Invalid request body")
+			return
+		}
+
+		if err := svc.ResetPassword(req.Email, req.Code, req.NewPassword); err != nil {
+			ctx.Error(401, err.Error())
+			return
+		}
+
+		ctx.JSON(200, map[string]interface{}{
+			"message": "Password reset successfully",
 		})
 	}
 }

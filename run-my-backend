@@ -1,27 +1,51 @@
 #!/usr/bin/env bash
+# ═══════════════════════════════════════════════════
+# Forge — Run My Backend
+# Deploys a new isolated Forge project instance
+# to your server on the next available port.
+#
+# Usage: ./run-my-backend "My Project Name"
+# ═══════════════════════════════════════════════════
+
+set -e
+export PATH="/usr/local/go/bin:$HOME/go/bin:$PATH"
 
 if [ -z "$1" ]; then
-  echo "❌ You must provide a project name!"
-  echo "Example: ./run-my-backend \"Chat App\""
+  echo ""
+  echo "  ⚡ Forge — Run My Backend"
+  echo "  ─────────────────────────────"
+  echo "  Usage: ./run-my-backend \"Project Name\""
+  echo "  Example: ./run-my-backend \"Chat App\""
+  echo ""
   exit 1
 fi
 
 PROJECT_NAME=$1
-# Convert to lowercase and replace spaces with hyphens (e.g. "Chat App" -> "chat-app")
-PROJECT_SLUG=$(echo "$PROJECT_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/ /-/g')
+PROJECT_SLUG=$(echo "$PROJECT_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | sed 's/^-//;s/-$//')
 
-SERVER_IP="80.225.199.57"
-SERVER_USER="ubuntu"
+SERVER_IP="${FORGE_SERVER_IP:-80.225.199.57}"
+SERVER_USER="${FORGE_SERVER_USER:-ubuntu}"
 
-echo "🔥 Building Forge for Linux AMD64..."
-GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o forge ./main.go
+echo ""
+echo "  ⚡ Forge — Run My Backend"
+echo "  ─────────────────────────────"
+echo "  Project: $PROJECT_NAME"
+echo "  Slug:    $PROJECT_SLUG"
+echo "  Server:  $SERVER_IP"
+echo ""
 
-echo "🔍 Finding an available port and deploying $PROJECT_NAME..."
+# Step 1: Build (dashboard is embedded via go:embed)
+echo "  [1/3] Building binary (linux/amd64)..."
+GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o forge-linux .
+echo "        ✓ Built $(du -h forge-linux | cut -f1)"
 
-# We pass PROJECT_SLUG and PROJECT_NAME into the remote script cleanly as arguments
+# Step 2: Upload
+echo "  [2/3] Uploading binary..."
+scp -o StrictHostKeyChecking=no forge-linux $SERVER_USER@$SERVER_IP:/tmp/forge-new
+
+# Step 3: Deploy on server
+echo "  [3/3] Deploying $PROJECT_NAME..."
 ssh -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_IP "bash -s" -- "$PROJECT_SLUG" "$PROJECT_NAME" << 'EOF'
-
-  # $1 is PROJECT_SLUG, $2 is PROJECT_NAME safely from local machine
   SLUG="$1"
   NAME="$2"
 
@@ -32,22 +56,25 @@ ssh -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_IP "bash -s" -- "$PROJECT_S
   done
 
   if [ "$PORT" -gt 8100 ]; then
-    echo "❌ No available ports between 8081 and 8100. Please open more ports in Oracle."
+    echo "  ❌ No available ports (8081-8100). All slots full."
     exit 1
   fi
 
-  echo "✅ Found available port: $PORT"
+  echo "  ✓ Available port: $PORT"
 
-  # Setup project folders
+  # Setup directories
   APP_DIR="/opt/forge/projects/$SLUG"
   DATA_DIR="/var/lib/forge-data/$SLUG"
-  
-  sudo mkdir -p "$APP_DIR"
-  sudo mkdir -p "$DATA_DIR"
+
+  sudo mkdir -p "$APP_DIR" "$DATA_DIR"
   sudo chown -R ubuntu:ubuntu "$APP_DIR" "$DATA_DIR"
 
-  # Generate isolated config
-  cat <<JSON > ~/forge.json
+  # Move binary
+  sudo mv /tmp/forge-new "$APP_DIR/forge"
+  sudo chmod +x "$APP_DIR/forge"
+
+  # Generate config
+  cat <<JSON > "$APP_DIR/forge.json"
 {
   "server": {
     "host": "0.0.0.0",
@@ -65,10 +92,8 @@ ssh -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_IP "bash -s" -- "$PROJECT_S
 }
 JSON
 
-  sudo mv ~/forge.json "$APP_DIR/forge.json"
-
-  # Generate systemd service for this specific project
-  cat <<SERVICE > ~/forge-$SLUG.service
+  # Generate systemd service
+  cat <<SERVICE | sudo tee /etc/systemd/system/forge-$SLUG.service > /dev/null
 [Unit]
 Description=Forge BaaS - $NAME
 After=network.target
@@ -85,38 +110,37 @@ RestartSec=3
 WantedBy=multi-user.target
 SERVICE
 
-  sudo mv ~/forge-$SLUG.service /etc/systemd/system/forge-$SLUG.service
-EOF
-
-# Transport the binary to the isolated folder
-scp forge $SERVER_USER@$SERVER_IP:/tmp/forge
-
-ssh -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_IP "bash -s" -- "$PROJECT_SLUG" "$PROJECT_NAME" << 'EOF'
-  SLUG="$1"
-  NAME="$2"
-
-  sudo mv /tmp/forge /opt/forge/projects/$SLUG/forge
-  sudo chmod +x /opt/forge/projects/$SLUG/forge
-  sudo chown root:root /opt/forge/projects/$SLUG/forge
-
-  # Enable and start the daemon
+  # Start service
   sudo systemctl daemon-reload
-  sudo systemctl enable forge-$SLUG
-  sudo systemctl restart forge-$SLUG
+  sudo systemctl enable "forge-$SLUG"
+  sudo systemctl restart "forge-$SLUG"
 
-  # Extract the port securely using Python (cleaner than grep)
-  PORT=$(python3 -c "import json; print(json.load(open('/opt/forge/projects/$SLUG/forge.json'))['server']['port'])")
-  
-  # Ensure the internal firewall is open for this port
+  # Open firewall
   sudo iptables -I INPUT 1 -p tcp --dport $PORT -j ACCEPT
-  sudo netfilter-persistent save > /dev/null 2>&1
+  sudo netfilter-persistent save > /dev/null 2>&1 || true
+
+  # Wait for it to come online
+  sleep 2
+  if systemctl is-active --quiet "forge-$SLUG"; then
+    STATUS="✅ ONLINE"
+  else
+    STATUS="⚠️  Check logs: journalctl -u forge-$SLUG -n 20"
+  fi
+
+  SERVER_IP=$(curl -s ifconfig.me 2>/dev/null || echo "YOUR_SERVER_IP")
 
   echo ""
-  echo "🚀 ==================================================="
-  echo "🎯 PROJECT LAUNCHED: $NAME"
-  echo "🌐 API Endpoint:  http://80.225.199.57:$PORT"
-  echo "🖥  Dashboard:    http://80.225.199.57:$PORT/dashboard"
-  echo "🛠  Daemon Name:  forge-$SLUG.service"
-  echo "🛡  Admin Panel:  http://80.225.199.57:8080/dashboard"
-  echo "🚀 ==================================================="
+  echo "  ═══════════════════════════════════════════"
+  echo "  🚀 PROJECT LAUNCHED: $NAME"
+  echo "  ─────────────────────────────────────────────"
+  echo "  Status:     $STATUS"
+  echo "  API:        http://$SERVER_IP:$PORT"
+  echo "  Dashboard:  http://$SERVER_IP:$PORT/dashboard"
+  echo "  Service:    forge-$SLUG.service"
+  echo "  Admin:      http://$SERVER_IP:8080/dashboard"
+  echo "  ═══════════════════════════════════════════"
 EOF
+
+# Cleanup
+rm -f forge-linux
+echo ""

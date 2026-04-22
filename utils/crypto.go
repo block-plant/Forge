@@ -69,3 +69,13 @@ func HexEncode(data []byte) string {
 func HexDecode(s string) ([]byte, error) {
 	return hex.DecodeString(s)
 }
+
+// GenerateRandomInt returns a random integer in the range [min, max].
+// Note: This is NOT cryptographically secure, but suitable for short-lived OTPs.
+func GenerateRandomInt(min, max int) int {
+	var b [4]byte
+	rand.Read(b[:])
+	val := int(uint32(b[0]) | uint32(b[1])<<8 | uint32(b[2])<<16 | uint32(b[3])<<24)
+	if val < 0 { val = -val }
+	return min + (val % (max - min + 1))
+}

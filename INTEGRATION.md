@@ -1,598 +1,175 @@
-# Forge Integration Guide
+# 🤖 Forge: The Ultimate AI Context & Integration Guide
 
-> **This file is meant for AI agents and developers.**  
-> It explains exactly how to integrate the Forge backend into any project — frontend, mobile, or server-side.
-
----
-
-## Quick Context
-
-**Forge** is a self-hosted Backend-as-a-Service (BaaS). It is a single Go binary that provides:
-- Auth (JWT, OAuth)
-- Document Database
-- File Storage
-- Real-Time WebSockets
-- Serverless Functions
-- Static Hosting
-- Analytics
-
-**Repository:** `https://github.com/ayushkunwarsingh/Forge`  
-**Default port:** `8080`  
-**API base:** `http://<host>:8080`  
-**SDK package:** `@forge/client` (located in `sdk/` directory of this repo)
+> **SYSTEM PROMPT / PRIME DIRECTIVE:** 
+> You are an advanced AI developer agent. The user has provided you with this file so that you can instantly understand **Forge**, a massive, zero-dependency Backend-as-a-Service (BaaS) built from scratch in Go. 
+> 
+> Your job is to read this document entirely to understand both **how to integrate frontends** with Forge, and **how Forge's internal engine operates** in case you are asked to debug or modify it.
 
 ---
 
-## Step 1: Start Forge
+## 🏛️ PART 1: The Master Architecture (Internal Context)
 
-```bash
-# Clone and build
-git clone https://github.com/ayushkunwarsingh/Forge.git
-cd Forge
-go build -o forge main.go
+Forge is not a wrapper. It is built entirely from first principles with zero external `go.mod` dependencies.
 
-# Run (all services on port 8080)
-./forge
+### 1. The Multi-Tenant Fleet Model
+Forge operates as a fleet on a single cloud server.
+- **Master Admin Node (Port 8080):** The core binary (`main.go`). It hosts an embedded Glassmorphism UI dashboard. It acts as the provisioning center.
+- **Child Nodes (Ports 8081, 8082...):** When `./run-my-backend "Project Name"` is executed, Forge provisions a dedicated `systemd` daemon (e.g., `forge-trial.service`), assigns an isolated port, and gives the project an isolated data folder.
+- **AI Rule:** If building a frontend, **never point the API to Port 8080**. Always point it to the assigned child port (e.g., `8081`).
 
-# Or with custom port
-FORGE_PORT=4000 ./forge
+### 2. Deep Engine Internals
+If you are asked to modify the backend code, you must understand these systems:
+- **HTTP Server (`server/`):** Hand-rolled TCP listener. Parses HTTP/1.1 byte-by-byte. Has its own Trie-based router.
+- **Database (`database/`):** A custom in-memory B-Tree that persists to disk via a Write-Ahead Log (WAL) and snapshots. It supports transactions and batched writes.
+- **Storage (`storage/`):** Content-addressable blob store. Infers MIME types from magic bytes.
+- **Realtime (`realtime/`):** Hand-rolled RFC 6455 WebSocket engine. Uses a Pub/Sub hub to stream database mutations.
+- **Security Rules (`rules/`):** A custom domain-specific language (DSL) with a bespoke lexer, parser, AST, and runtime evaluator.
+
+### 3. Data Model on Disk
+Forge relies solely on the filesystem. No external DB.
+Path: `/var/lib/forge-data/<project_slug>/`
+```
+├── auth/         (users.json, tokens/, keys/)
+├── dynamicdb/    (wal/, snapshots/, collections/)
+├── storage/      (objects/, metadata/)
+├── functions/    (bundles/, logs/)
+├── hosting/      (deployed static sites)
+└── forge.json    (The master config file for this node)
 ```
 
-Verify: `curl http://localhost:8080/health` → should return `{ "status": "ok" }`
+### 4. Known Edge Cases & Debugging History
+As an AI, if you encounter bugs, check these historical context clues:
+- **SMTP Deadlocks:** Previously, the `auth/service.go` `Signup` function held a Mutex lock while awaiting an external SMTP API response, causing the server to hang. Locks are now released *before* network calls. Keep locks tight!
+- **DMARC & Gmail Spoofing:** When configuring `forge.json` with SMTP (like Brevo on port 2525), sending emails with a `From: ...@gmail.com` address will trigger spam filters. Always advise the user to use a custom domain.
+- **Text File Busy Errors:** When updating the binary via `./update-all-projects`, the system explicitly stops the `systemctl` unit, swaps the binary, and restarts it to prevent execution locking.
 
 ---
 
-## Step 2: Multi-Project Provisioning (Cloud Environments)
+## 🔌 PART 2: Frontend Integration Guide
 
-If Forge is running on a cloud server (like Oracle Free Tier), you can host an infinite number of isolated projects from a single server. Each project gets its own dedicated data folder, isolated users, and background daemon, running on a unique port.
+When building a React, Next.js, or mobile app that talks to Forge, follow these API contracts strictly.
 
-To provision a new project:
-1. Open a terminal in your Forge repository.
-2. Run the helper script: `./run-my-backend "My Project"`
-3. The script will automatically find a free port (e.g. `8081`), configure the folders, and start the daemon.
+### A. Authentication & State
+Always store the returned JWT token. Append it to all private requests:
+`Headers: { "Authorization": "Bearer <JWT>" }`
 
-When interacting with this specific project from a frontend codebase, you MUST point your SDK endpoint to that specific newly generated port.
+#### Sign Up (Triggers SMTP OTP)
+```http
+POST http://localhost:8081/auth/signup
+Content-Type: application/json
+
+{ "email": "user@example.com", "password": "secure123" }
+```
+*Note: If Brevo SMTP is configured in `forge.json`, this emails a 6-digit OTP to the user.*
+
+#### Verify OTP
+```http
+POST http://localhost:8081/auth/verify-otp
+Content-Type: application/json
+
+{ "email": "user@example.com", "code": "123456", "type": "signup" }
+```
+
+#### Log In
+```http
+POST http://localhost:8081/auth/signin
+Content-Type: application/json
+
+{ "email": "user@example.com", "password": "secure123" }
+```
+**Response:** `{"tokens": {"token": "...", "refresh_token": "..."}, "user": {...}}`
 
 ---
 
-## Step 3: Connect From Your Project
+### B. Database API (NoSQL Document Store)
 
-### Option A: Use the TypeScript SDK
+#### Create or Replace Document (PUT)
+```http
+PUT http://localhost:8081/db/users/user-123
+Authorization: Bearer <token>
+Content-Type: application/json
 
-```bash
-# From your project directory, link the SDK
-cd /path/to/your-project
-
-# Option 1: npm link
-cd /path/to/Forge/sdk && npm install && npm run build
-npm link
-cd /path/to/your-project && npm link @forge/client
-
-# Option 2: Copy the SDK into your project
-cp -r /path/to/Forge/sdk ./forge-sdk
-# Then import from "./forge-sdk/dist"
-
-# Option 3: Install from local path
-npm install /path/to/Forge/sdk
+{ "name": "Alice", "role": "admin" }
 ```
 
-**Initialize the client:**
+#### Partial Update Document (PATCH)
+```http
+PATCH http://localhost:8081/db/users/user-123
+Authorization: Bearer <token>
+Content-Type: application/json
 
-```typescript
-import { initializeApp } from "@forge/client";
-
-// Point to wherever Forge is running
-const forge = initializeApp({
-  endpoint: "http://localhost:8080"
-});
+{ "role": "superadmin" }
 ```
 
-### Option B: Use REST API Directly (any language)
+#### Query Documents
+```http
+POST http://localhost:8081/db/_query
+Authorization: Bearer <token>
+Content-Type: application/json
 
-Forge exposes a standard REST API. No SDK required — use `fetch`, `axios`, Python `requests`, Go `http.Client`, or any HTTP client.
-
----
-
-## Step 3: Authentication
-
-### Sign Up
-
-```typescript
-// SDK
-const result = await forge.auth.signup("user@example.com", "password123");
-// result.tokens.token → JWT access token
-// result.user → user object
-```
-
-```bash
-# REST
-curl -X POST http://localhost:8080/auth/signup \
-  -H "Content-Type: application/json" \
-  -d '{"email":"user@example.com","password":"password123"}'
-```
-
-### Log In
-
-```typescript
-// SDK
-const result = await forge.auth.login("user@example.com", "password123");
-// Token is auto-stored in the SDK — all subsequent requests are authenticated
-```
-
-```bash
-# REST
-curl -X POST http://localhost:8080/auth/signin \
-  -H "Content-Type: application/json" \
-  -d '{"email":"user@example.com","password":"password123"}'
-
-# Response includes: { "tokens": { "token": "eyJ...", "refresh_token": "..." } }
-# Use the token in subsequent requests:
-# -H "Authorization: Bearer eyJ..."
-```
-
-### Get Current User
-
-```typescript
-const user = await forge.auth.me();
-```
-
-```bash
-curl http://localhost:8080/auth/me \
-  -H "Authorization: Bearer <token>"
-```
-
-### Refresh Token
-
-```bash
-curl -X POST http://localhost:8080/auth/refresh \
-  -H "Content-Type: application/json" \
-  -d '{"refresh_token":"<refresh_token>"}'
+{
+  "collection": "users",
+  "where": [ {"field": "role", "op": "==", "value": "admin"} ],
+  "order_by": "_created_at",
+  "order_dir": "desc",
+  "limit": 50
+}
 ```
 
 ---
 
-## Step 4: Database Operations
+### C. Storage API (File Blobs)
 
-### Create / Set a Document
+#### Upload a File
+Sends raw bytes directly. Forge infers MIME type.
+```http
+POST http://localhost:8081/storage/upload/avatars/user-123.jpg
+Authorization: Bearer <token>
+Content-Type: image/jpeg
 
-```typescript
-// SDK
-await forge.db.collection("users").set("user-123", {
-  name: "Alice",
-  email: "alice@example.com",
-  age: 28
-});
+<RAW BYTES>
 ```
 
-```bash
-# REST — PUT (set with explicit ID)
-curl -X PUT http://localhost:8080/db/users/user-123 \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <token>" \
-  -d '{"name":"Alice","email":"alice@example.com","age":28}'
+#### Generate a Signed URL
+```http
+POST http://localhost:8081/storage/signed-url
+Authorization: Bearer <token>
+Content-Type: application/json
 
-# REST — POST (auto-generate ID)
-curl -X POST http://localhost:8080/db/users \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <token>" \
-  -d '{"name":"Bob","email":"bob@example.com"}'
-```
-
-### Read a Document
-
-```typescript
-const user = await forge.db.collection("users").get("user-123");
-```
-
-```bash
-curl http://localhost:8080/db/users/user-123 \
-  -H "Authorization: Bearer <token>"
-```
-
-### List Documents (Paginated)
-
-```bash
-curl "http://localhost:8080/db/users?limit=20&offset=0" \
-  -H "Authorization: Bearer <token>"
-```
-
-### Update a Document (Partial Merge)
-
-```bash
-curl -X PATCH http://localhost:8080/db/users/user-123 \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <token>" \
-  -d '{"age":29}'
-```
-
-### Delete a Document
-
-```bash
-curl -X DELETE http://localhost:8080/db/users/user-123 \
-  -H "Authorization: Bearer <token>"
-```
-
-### Query Documents
-
-```bash
-curl -X POST http://localhost:8080/db/_query \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <token>" \
-  -d '{
-    "collection": "users",
-    "where": [
-      {"field": "age", "op": ">=", "value": 21}
-    ],
-    "order_by": "name",
-    "order_dir": "asc",
-    "limit": 50
-  }'
-```
-
-**Available query operators:** `==`, `!=`, `>`, `>=`, `<`, `<=`, `in`, `array-contains`
-
-### Batch Write (up to 500 operations)
-
-```bash
-curl -X POST http://localhost:8080/db/_batch \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <token>" \
-  -d '{
-    "writes": [
-      {"operation":"set","collection":"users","document_id":"u1","data":{"name":"Alice"}},
-      {"operation":"set","collection":"users","document_id":"u2","data":{"name":"Bob"}},
-      {"operation":"delete","collection":"old_users","document_id":"u99"}
-    ]
-  }'
-```
-
-### Transactions (Atomic Read-Then-Write)
-
-```bash
-curl -X POST http://localhost:8080/db/_transaction \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <token>" \
-  -d '{
-    "reads": [
-      {"collection":"accounts","document_id":"acct-1"}
-    ],
-    "writes": [
-      {"operation":"update","collection":"accounts","document_id":"acct-1","data":{"balance":950}}
-    ]
-  }'
+{ "path": "avatars/user-123.jpg", "expires_in": 3600 }
 ```
 
 ---
 
-## Step 5: File Storage
+### D. Realtime WebSockets
 
-### Upload a File
-
-```bash
-curl -X POST http://localhost:8080/storage/upload/photos/vacation.jpg \
-  -H "Authorization: Bearer <token>" \
-  -H "Content-Type: image/jpeg" \
-  --data-binary @vacation.jpg
-```
-
-### Download a File
-
-```bash
-curl http://localhost:8080/storage/object/photos/vacation.jpg -o vacation.jpg
-```
-
-### Generate a Signed URL (time-limited public access)
-
-```bash
-curl -X POST http://localhost:8080/storage/signed-url \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <token>" \
-  -d '{"path":"photos/vacation.jpg","expires_in":3600}'
-```
-
-### List Files
-
-```bash
-curl http://localhost:8080/storage/list/photos/ \
-  -H "Authorization: Bearer <token>"
-```
-
-### Chunked Upload (for large files)
-
-```bash
-# 1. Init
-curl -X POST http://localhost:8080/storage/upload-chunk/init \
-  -H "Content-Type: application/json" \
-  -d '{"path":"videos/big.mp4","total_size":104857600,"content_type":"video/mp4"}'
-# Returns: { "upload_id": "...", "chunk_size": 262144, "total_chunks": 400 }
-
-# 2. Upload each chunk
-curl -X POST "http://localhost:8080/storage/upload-chunk/add?upload_id=<id>&index=0" \
-  --data-binary @chunk_0
-
-# 3. Finalize
-curl -X POST http://localhost:8080/storage/upload-chunk/complete \
-  -H "Content-Type: application/json" \
-  -d '{"upload_id":"<id>"}'
-```
-
----
-
-## Step 6: Real-Time Subscriptions
-
-### SDK (Recommended)
-
-```typescript
-// Subscribe to live document changes
-const unsubscribe = await forge.db.collection("messages").onSnapshot((change) => {
-  console.log("New message:", change);
-});
-
-// Advanced: use the RealtimeManager directly
-forge.realtime.connect();
-const unsub = forge.realtime.subscribe("my-channel", (data) => {
-  console.log("Channel event:", data);
-});
-
-// Monitor connection state
-forge.realtime.onStateChange((state) => {
-  console.log("Connection:", state); // "connecting" | "connected" | "disconnected" | "reconnecting"
-});
-```
-
-### Raw WebSocket
-
+Forge streams DB mutations directly to the frontend.
 ```javascript
-const ws = new WebSocket("ws://localhost:8080/realtime/ws");
+const ws = new WebSocket("ws://localhost:8081/realtime/ws");
 
 ws.onopen = () => {
-  // Authenticate
-  ws.send(JSON.stringify({ type: "auth", payload: { token: "<jwt-token>" } }));
+  // 1. Authenticate
+  ws.send(JSON.stringify({ type: "auth", payload: { token: "YOUR_JWT" } }));
   
-  // Subscribe to a channel
-  ws.send(JSON.stringify({ type: "subscribe", payload: { channel: "db:messages" } }));
+  // 2. Subscribe
+  ws.send(JSON.stringify({ type: "subscribe", payload: { channel: "db:users" } }));
 };
 
 ws.onmessage = (event) => {
   const msg = JSON.parse(event.data);
-  if (msg.type === "message") {
-    console.log(`[${msg.channel}]`, msg.payload);
-  }
+  if (msg.type === "message") console.log("Live DB Update:", msg.payload);
 };
 ```
 
-### Server-Side Publish
-
-```bash
-curl -X POST http://localhost:8080/realtime/publish \
-  -H "Content-Type: application/json" \
-  -d '{"channel":"notifications","event":"new","data":{"text":"Hello world"}}'
-```
-
 ---
 
-## Step 7: Serverless Functions
+## 🏁 AI Agent Readiness Checklist
 
-### Deploy a Function
+Before you output any code for the user, confirm the following:
+- [ ] **Context Aware:** Do you understand that Forge is completely custom-built in Go, so you should not suggest standard libraries like `net/http` or `gorilla/mux` if modifying the backend?
+- [ ] **Port Accuracy:** Are your frontend `fetch` calls hitting the project port (e.g., 8081) and NOT the Admin port (8080)?
+- [ ] **Auth Headers:** Are you attaching `Authorization: Bearer <token>` to protected endpoints?
+- [ ] **OTP Handling:** Did you build UI screens to handle the OTP verification step after `/auth/signup` and `/auth/forgot-password`?
+- [ ] **Database Mutators:** Are you using `PUT` for complete replacements and `PATCH` for partial merges?
 
-```bash
-curl -X POST http://localhost:8080/functions/deploy \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <token>" \
-  -d '{
-    "name": "greet",
-    "source": "module.exports = function(payload) { return { message: \"Hello, \" + (payload.name || \"World\") + \"!\" }; }",
-    "entry_point": "index.js",
-    "runtime": "node"
-  }'
-```
-
-### Invoke a Function
-
-```typescript
-// SDK
-const result = await forge.functions.invoke("greet", { name: "Alice" });
-// result.output → '{"message":"Hello, Alice!"}'
-```
-
-```bash
-# REST
-curl -X POST http://localhost:8080/functions/invoke/greet \
-  -H "Content-Type: application/json" \
-  -d '{"name":"Alice"}'
-```
-
-### View Function Logs
-
-```bash
-curl http://localhost:8080/functions/logs/greet?limit=20
-```
-
-### Deploy with Cron Schedule
-
-```bash
-curl -X POST http://localhost:8080/functions/deploy \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "dailyCleanup",
-    "source": "module.exports = () => { console.log(JSON.stringify({cleaned: true})); };",
-    "triggers": [{"type":"schedule","schedule":"0 3 * * *"}]
-  }'
-```
-
----
-
-## Step 8: Analytics
-
-### Track Events
-
-```typescript
-// SDK
-await forge.analytics.track("page_view", { page: "/home", referrer: "google" });
-```
-
-```bash
-# REST — Single event
-curl -X POST http://localhost:8080/analytics/track \
-  -H "Content-Type: application/json" \
-  -d '{"name":"page_view","properties":{"page":"/home"}}'
-
-# REST — Batch (multiple events)
-curl -X POST http://localhost:8080/analytics/batch \
-  -H "Content-Type: application/json" \
-  -d '{
-    "events": [
-      {"name":"page_view","properties":{"page":"/home"}},
-      {"name":"click","properties":{"button":"signup"}}
-    ]
-  }'
-```
-
----
-
-## Step 9: React / Next.js Integration Example
-
-```tsx
-// lib/forge.ts
-import { initializeApp } from "@forge/client";
-export const forge = initializeApp({ endpoint: process.env.NEXT_PUBLIC_FORGE_URL || "http://localhost:8080" });
-
-// app/page.tsx
-"use client";
-import { useEffect, useState } from "react";
-import { forge } from "@/lib/forge";
-
-export default function Home() {
-  const [posts, setPosts] = useState([]);
-
-  useEffect(() => {
-    // Fetch initial data
-    forge.db.collection("posts").get("all").then(setPosts);
-
-    // Subscribe to live changes
-    let unsub: (() => void) | null = null;
-    forge.db.collection("posts").onSnapshot((change) => {
-      console.log("Live update:", change);
-    }).then(fn => { unsub = fn; });
-
-    return () => { unsub?.(); };
-  }, []);
-
-  const handleCreate = async () => {
-    await forge.db.collection("posts").set(`post-${Date.now()}`, {
-      title: "New Post",
-      body: "Created from React!",
-      created_at: Date.now()
-    });
-  };
-
-  return (
-    <div>
-      <button onClick={handleCreate}>Create Post</button>
-      <pre>{JSON.stringify(posts, null, 2)}</pre>
-    </div>
-  );
-}
-```
-
----
-
-## Common Patterns
-
-### Protected API Calls
-
-After login, the SDK automatically injects the JWT token into every request. For REST:
-
-```
-Authorization: Bearer eyJhbGciOiJSUzI1NiIs...
-```
-
-### Environment-Based Configuration
-
-```env
-# .env.local (for Next.js / Vite)
-NEXT_PUBLIC_FORGE_URL=http://localhost:8080       # development
-NEXT_PUBLIC_FORGE_URL=https://api.mysite.com      # production
-```
-
-### Error Handling
-
-All Forge API errors return:
-
-```json
-{
-  "error": "Not Found",
-  "message": "Document 'users/xyz' not found",
-  "status": 404
-}
-```
-
----
-
-## Deployment Checklist
-
-When deploying Forge to production:
-
-1. **Build:** `go build -o forge main.go`
-2. **Upload** the `forge` binary to your server
-3. **Create** a `forge.json` config file (or use env vars)
-4. **Set** `FORGE_DATA_DIR` to a persistent disk path
-5. **Run** behind a reverse proxy (Nginx/Caddy) with HTTPS
-6. **Update** your SDK endpoint to the production URL:
-   ```typescript
-   initializeApp({ endpoint: "https://api.yoursite.com" });
-   ```
-7. **Back up** the `FORGE_DATA_DIR` directory regularly — it contains everything
-
-### Nginx Reverse Proxy
-
-```nginx
-server {
-    listen 443 ssl;
-    server_name api.yoursite.com;
-
-    ssl_certificate     /etc/letsencrypt/live/api.yoursite.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/api.yoursite.com/privkey.pem;
-
-    location / {
-        proxy_pass http://127.0.0.1:8080;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-}
-```
-
----
-
-## API Reference Quick Table
-
-| Service | Method | Endpoint | Body |
-|---------|--------|----------|------|
-| Health | GET | `/health` | — |
-| Signup | POST | `/auth/signup` | `{email, password}` |
-| Login | POST | `/auth/signin` | `{email, password}` |
-| Refresh | POST | `/auth/refresh` | `{refresh_token}` |
-| Me | GET | `/auth/me` | — |
-| Create Doc | POST | `/db/:collection` | `{...fields}` |
-| Get Doc | GET | `/db/:collection/:id` | — |
-| Set Doc | PUT | `/db/:collection/:id` | `{...fields}` |
-| Update Doc | PATCH | `/db/:collection/:id` | `{...fields}` |
-| Delete Doc | DELETE | `/db/:collection/:id` | — |
-| Query | POST | `/db/_query` | `{collection, where, order_by, limit}` |
-| Batch | POST | `/db/_batch` | `{writes: [{operation, collection, document_id, data}]}` |
-| Upload | POST | `/storage/upload/*path` | raw file bytes |
-| Download | GET | `/storage/object/*path` | — |
-| Signed URL | POST | `/storage/signed-url` | `{path, expires_in}` |
-| Deploy Fn | POST | `/functions/deploy` | `{name, source, runtime, triggers}` |
-| Invoke Fn | POST | `/functions/invoke/:name` | `{...payload}` |
-| Fn Logs | GET | `/functions/logs/:name` | — |
-| WebSocket | GET | `/realtime/ws` | — (upgrade) |
-| Publish | POST | `/realtime/publish` | `{channel, event, data}` |
-| Track | POST | `/analytics/track` | `{name, properties}` |
-| Batch Track | POST | `/analytics/batch` | `{events: [{name, properties}]}` |
-| Dashboard | GET | `/dashboard/` | — (HTML) |
+If you have read and understood this document, you are ready to build, debug, and scale with Forge.

@@ -25,6 +25,10 @@ type Config struct {
 	Hosting HostingConfig `json:"hosting"`
 	// Analytics configuration
 	Analytics AnalyticsConfig `json:"analytics"`
+	// Real-time configuration
+	Realtime RealtimeConfig `json:"realtime"`
+	// Email/SMTP configuration
+	Email EmailConfig `json:"email"`
 	// Logging configuration
 	Log LogConfig `json:"log"`
 	// Data directory (root for all persistent data)
@@ -73,25 +77,22 @@ type AuthConfig struct {
 // DatabaseConfig holds database engine settings.
 type DatabaseConfig struct {
 	// Enabled toggles the database service (default: true)
-	Enabled bool `json:"enabled"`
-	// WALDir is the directory for write-ahead log files (relative to DataDir)
-	WALDir string `json:"wal_dir"`
-	// SnapshotDir is the directory for snapshot files (relative to DataDir)
-	SnapshotDir string `json:"snapshot_dir"`
-	// SnapshotInterval is how often to take snapshots (default: "5m")
-	SnapshotInterval string `json:"snapshot_interval"`
-	// MaxTransactionSize is the max number of documents per transaction (default: 500)
-	MaxTransactionSize int `json:"max_transaction_size"`
+	Enabled            bool   `json:"enabled"`
+	WALDir             string `json:"wal_dir"`
+	SnapshotDir        string `json:"snapshot_dir"`
+	SnapshotInterval   string `json:"snapshot_interval"`
+	MaxTransactionSize int    `json:"max_transaction_size"`
+	MaxConnections     int    `json:"max_connections"`
+	CacheSizeMB        int    `json:"cache_size_mb"`
 }
 
 // StorageConfig holds file storage settings.
 type StorageConfig struct {
 	// Enabled toggles the storage service (default: true)
-	Enabled bool `json:"enabled"`
-	// MaxFileSize is the maximum upload file size in bytes (default: 104857600 = 100MB)
+	Enabled     bool  `json:"enabled"`
 	MaxFileSize int64 `json:"max_file_size"`
-	// ChunkSize is the size of each upload chunk in bytes (default: 262144 = 256KB)
-	ChunkSize int `json:"chunk_size"`
+	ChunkSize   int   `json:"chunk_size"`
+	AllowedTypes string `json:"allowed_types"`
 }
 
 // FunctionsConfig holds serverless functions settings.
@@ -106,6 +107,8 @@ type FunctionsConfig struct {
 	MaxConcurrent int `json:"max_concurrent"`
 	// Runtime is the execution runtime: "node" or "script" (default: "script")
 	Runtime string `json:"runtime"`
+	// Env holds environment variables for function execution
+	Env map[string]string `json:"env"`
 }
 
 // HostingConfig holds static hosting settings.
@@ -120,6 +123,8 @@ type HostingConfig struct {
 	EnableCompression bool `json:"enable_compression"`
 	// SPAMode enables single-page app fallback to index.html (default: true)
 	SPAMode bool `json:"spa_mode"`
+	// Headers allows setting custom HTTP response headers
+	Headers map[string]string `json:"headers"`
 }
 
 // AnalyticsConfig holds analytics engine settings.
@@ -132,6 +137,25 @@ type AnalyticsConfig struct {
 	FlushInterval string `json:"flush_interval"`
 	// RetentionDays is how long to keep analytics logs (0 = forever, default: 90)
 	RetentionDays int `json:"retention_days"`
+}
+
+// RealtimeConfig holds real-time WebSocket service settings.
+type RealtimeConfig struct {
+	// Enabled toggles the real-time service (default: true)
+	Enabled bool `json:"enabled"`
+	// MaxClients is the max number of concurrent WebSocket connections
+	MaxClients int `json:"max_clients"`
+}
+
+// EmailConfig holds SMTP settings for OTP and notifications.
+type EmailConfig struct {
+	// Enabled toggles email delivery (default: false)
+	Enabled bool `json:"enabled"`
+	Host    string `json:"host"`
+	Port    int    `json:"port"`
+	User    string `json:"user"`
+	Password string `json:"password"`
+	From    string `json:"from"`
 }
 
 // LogConfig holds logging settings.
@@ -170,11 +194,14 @@ func DefaultConfig() *Config {
 			SnapshotDir:        "database/snapshots",
 			SnapshotInterval:   "5m",
 			MaxTransactionSize: 500,
+			MaxConnections:     100,
+			CacheSizeMB:        128,
 		},
 		Storage: StorageConfig{
-			Enabled:     true,
-			MaxFileSize: 100 * 1024 * 1024, // 100MB
-			ChunkSize:   256 * 1024,         // 256KB
+			Enabled:      true,
+			MaxFileSize:  100 * 1024 * 1024, // 100MB
+			ChunkSize:    256 * 1024,         // 256KB
+			AllowedTypes: "*/*",
 		},
 		Functions: FunctionsConfig{
 			Enabled:       true,
@@ -182,6 +209,7 @@ func DefaultConfig() *Config {
 			MemoryLimit:   256,
 			MaxConcurrent: 10,
 			Runtime:       "script",
+			Env:           make(map[string]string),
 		},
 		Hosting: HostingConfig{
 			Enabled:           true,
@@ -189,12 +217,21 @@ func DefaultConfig() *Config {
 			CacheMaxFileSize:  1024 * 1024, // 1MB
 			EnableCompression: true,
 			SPAMode:           true,
+			Headers:           make(map[string]string),
 		},
 		Analytics: AnalyticsConfig{
 			Enabled:       true,
 			BufferSize:    10000,
 			FlushInterval: "5s",
 			RetentionDays: 90,
+		},
+		Realtime: RealtimeConfig{
+			Enabled:    true,
+			MaxClients: 1000,
+		},
+		Email: EmailConfig{
+			Enabled: false,
+			Port:    587,
 		},
 		Log: LogConfig{
 			Level:  "info",

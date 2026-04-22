@@ -57,5 +57,12 @@ func RegisterRoutes(router *server.Router) error {
 		ctx.Response.SetBody(data)
 	})
 
+	// Admin APIs for Project Management
+	router.GET("/admin/projects", handleGetProjects)
+	router.POST("/admin/projects", handleCreateProject)
+	router.DELETE("/admin/projects/:slug", handleDeleteProject)
+	router.GET("/admin/projects/:slug/config", handleGetProjectConfig)
+	router.PUT("/admin/projects/:slug/config", handleUpdateProjectConfig)
+
 	return nil
 }

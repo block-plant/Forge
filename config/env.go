@@ -115,6 +115,43 @@ func ApplyEnvOverrides(cfg *Config) {
 		cfg.Hosting.Enabled = parseBool(v)
 	}
 
+	// Functions
+	if v := os.Getenv("FORGE_FUNCTIONS_ENABLED"); v != "" {
+		cfg.Functions.Enabled = parseBool(v)
+	}
+
+	// Analytics
+	if v := os.Getenv("FORGE_ANALYTICS_ENABLED"); v != "" {
+		cfg.Analytics.Enabled = parseBool(v)
+	}
+
+	// Real-time
+	if v := os.Getenv("FORGE_REALTIME_ENABLED"); v != "" {
+		cfg.Realtime.Enabled = parseBool(v)
+	}
+
+	// Email / SMTP
+	if v := os.Getenv("FORGE_EMAIL_ENABLED"); v != "" {
+		cfg.Email.Enabled = parseBool(v)
+	}
+	if v := os.Getenv("FORGE_SMTP_HOST"); v != "" {
+		cfg.Email.Host = v
+	}
+	if v := os.Getenv("FORGE_SMTP_PORT"); v != "" {
+		if port, err := strconv.Atoi(v); err == nil {
+			cfg.Email.Port = port
+		}
+	}
+	if v := os.Getenv("FORGE_SMTP_USER"); v != "" {
+		cfg.Email.User = v
+	}
+	if v := os.Getenv("FORGE_SMTP_PASS"); v != "" {
+		cfg.Email.Password = v
+	}
+	if v := os.Getenv("FORGE_SMTP_FROM"); v != "" {
+		cfg.Email.From = v
+	}
+
 	// Log
 	if v := os.Getenv("FORGE_LOG_LEVEL"); v != "" {
 		cfg.Log.Level = v

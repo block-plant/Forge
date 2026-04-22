@@ -22,7 +22,15 @@ var (
 	ErrInvalidPassword   = errors.New("auth: invalid password")
 	ErrUserDisabled      = errors.New("auth: user account is disabled")
 	ErrWeakPassword      = errors.New("auth: password must be at least 6 characters")
+	ErrInvalidOTP        = errors.New("auth: invalid or expired verification code")
 )
+
+// OTPRecord represents a temporary verification code.
+type OTPRecord struct {
+	Code      string
+	ExpiresAt time.Time
+	Type      string // "signup", "reset"
+}
 
 // User represents a Forge user account.
 type User struct {
@@ -83,8 +91,9 @@ type Service struct {
 	jwt      *JWTManager
 	sessions *SessionManager
 	tokens   *TokenStore
-	dataDir  string
+	dataDir    string
 	bcryptCost int
+	otpStore   map[string]*OTPRecord // email → OTPRecord
 }
 
 // NewService creates and initializes the auth service.
@@ -131,6 +140,7 @@ func NewService(cfg *config.Config, log *logger.Logger) (*Service, error) {
 		tokens:     tokenStore,
 		dataDir:    dataDir,
 		bcryptCost: cfg.Auth.BcryptCost,
+		otpStore:   make(map[string]*OTPRecord),
 	}
 
 	// Load existing users from disk
@@ -169,16 +179,17 @@ func (s *Service) Signup(email, password, displayName string) (*User, error) {
 	}
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	// Check for duplicate email
 	if _, exists := s.byEmail[email]; exists {
+		s.mu.Unlock()
 		return nil, ErrUserAlreadyExists
 	}
 
 	// Hash password
 	hash, err := HashPassword(password, s.bcryptCost)
 	if err != nil {
+		s.mu.Unlock()
 		return nil, fmt.Errorf("auth: failed to hash password: %w", err)
 	}
 
@@ -197,6 +208,7 @@ func (s *Service) Signup(email, password, displayName string) (*User, error) {
 
 	s.users[uid] = user
 	s.byEmail[email] = uid
+	s.mu.Unlock()
 
 	// Persist to disk
 	if err := s.saveUser(user); err != nil {
@@ -205,7 +217,143 @@ func (s *Service) Signup(email, password, displayName string) (*User, error) {
 
 	s.log.Info("User created", logger.Fields{"uid": uid, "email": email})
 
+	// Generate and send OTP if email is enabled
+	if s.cfg.Email.Enabled {
+		s.SendVerificationOTP(email)
+	}
+
 	return user, nil
+}
+
+// SendVerificationOTP generates a 6-digit code and sends it via email.
+func (s *Service) SendVerificationOTP(email string) error {
+	code := fmt.Sprintf("%06d", utils.GenerateRandomInt(100000, 999999))
+	
+	s.mu.Lock()
+	s.otpStore[email] = &OTPRecord{
+		Code:      code,
+		ExpiresAt: time.Now().Add(15 * time.Minute),
+		Type:      "signup",
+	}
+	s.mu.Unlock()
+
+	s.log.Info("Verification OTP generated", logger.Fields{"email": email, "code": code})
+
+	if s.cfg.Email.Enabled {
+		subject := "Verify your Forge account"
+		body := fmt.Sprintf("Your verification code is: %s\n\nThis code will expire in 15 minutes.", code)
+		
+		err := utils.SendEmail(
+			s.cfg.Email.Host,
+			s.cfg.Email.Port,
+			s.cfg.Email.User,
+			s.cfg.Email.Password,
+			s.cfg.Email.From,
+			email,
+			subject,
+			body,
+		)
+		if err != nil {
+			s.log.Error("Failed to send verification email", logger.Fields{"email": email, "error": err.Error()})
+			return err
+		}
+	}
+	
+	return nil
+}
+
+// VerifyOTP checks if a code is valid and updates user status.
+func (s *Service) VerifyOTP(email, code, otpType string) error {
+	s.mu.Lock()
+	record, exists := s.otpStore[email]
+	if !exists || record.Code != code || record.Type != otpType || time.Now().After(record.ExpiresAt) {
+		s.mu.Unlock()
+		return ErrInvalidOTP
+	}
+	delete(s.otpStore, email)
+	s.mu.Unlock()
+
+	if otpType == "signup" {
+		user := s.GetUserByEmail(email)
+		if user == nil {
+			return ErrUserNotFound
+		}
+		
+		s.mu.Lock()
+		user.EmailVerified = true
+		user.UpdatedAt = time.Now().Unix()
+		s.mu.Unlock()
+		
+		return s.saveUser(user)
+	}
+
+	return nil
+}
+
+// RequestPasswordReset sends an OTP for password recovery.
+func (s *Service) RequestPasswordReset(email string) error {
+	user := s.GetUserByEmail(email)
+	if user == nil {
+		return ErrUserNotFound
+	}
+
+	code := fmt.Sprintf("%06d", utils.GenerateRandomInt(100000, 999999))
+	
+	s.mu.Lock()
+	s.otpStore[email] = &OTPRecord{
+		Code:      code,
+		ExpiresAt: time.Now().Add(15 * time.Minute),
+		Type:      "reset",
+	}
+	s.mu.Unlock()
+
+	s.log.Info("Reset OTP generated", logger.Fields{"email": email, "code": code})
+
+	if s.cfg.Email.Enabled {
+		subject := "Reset your Forge password"
+		body := fmt.Sprintf("Your password reset code is: %s\n\nIf you did not request this, please ignore this email.", code)
+		
+		return utils.SendEmail(
+			s.cfg.Email.Host,
+			s.cfg.Email.Port,
+			s.cfg.Email.User,
+			s.cfg.Email.Password,
+			s.cfg.Email.From,
+			email,
+			subject,
+			body,
+		)
+	}
+	
+	return nil
+}
+
+// ResetPassword updates a password using a reset OTP.
+func (s *Service) ResetPassword(email, code, newPassword string) error {
+	if len(newPassword) < 6 {
+		return ErrWeakPassword
+	}
+
+	if err := s.VerifyOTP(email, code, "reset"); err != nil {
+		return err
+	}
+
+	user := s.GetUserByEmail(email)
+	if user == nil {
+		return ErrUserNotFound
+	}
+
+	hash, err := HashPassword(newPassword, s.bcryptCost)
+	if err != nil {
+		return err
+	}
+
+	s.mu.Lock()
+	user.PasswordHash = hash
+	user.UpdatedAt = time.Now().Unix()
+	s.mu.Unlock()
+
+	return s.saveUser(user)
 }
 
 // Signin authenticates a user with email and password.

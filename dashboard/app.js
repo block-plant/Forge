@@ -1,6 +1,7 @@
 // ═══════════════════════════════════════════════════
-// Forge Console — Interactive Engine v3
+// Forge Console — Interactive Engine v4
 // Admin Control Center + Project Isolation
+// Fixed: page sync, scroll animations, device compat
 // ═══════════════════════════════════════════════════
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -9,18 +10,43 @@ document.addEventListener('DOMContentLoaded', () => {
   const HOSTNAME = window.location.hostname;
   const PORT = window.location.port || '8080';
   const sidebar = document.getElementById('sidebar');
+  const overlay = document.getElementById('sidebar-overlay');
+
+  // ── Theme Management ──
+  const themeToggle = document.getElementById('theme-toggle');
+  const iconSun = document.getElementById('theme-icon-sun');
+  const iconMoon = document.getElementById('theme-icon-moon');
+  
+  function applyTheme(isDark) {
+    if (isDark) {
+      document.documentElement.setAttribute('data-theme', 'dark');
+      if (iconSun) iconSun.classList.remove('hidden');
+      if (iconMoon) iconMoon.classList.add('hidden');
+    } else {
+      document.documentElement.removeAttribute('data-theme');
+      if (iconSun) iconSun.classList.add('hidden');
+      if (iconMoon) iconMoon.classList.remove('hidden');
+    }
+  }
+  
+  let currentDark = localStorage.getItem('theme') !== 'light';
+  applyTheme(currentDark);
+  
+  if (themeToggle) {
+    themeToggle.addEventListener('click', () => {
+      currentDark = !currentDark;
+      localStorage.setItem('theme', currentDark ? 'dark' : 'light');
+      applyTheme(currentDark);
+    });
+  }
 
   // ── Mode Detection ──
-  // Port 8080 (or empty = default) = Admin Control Center
-  // Any other port = Child project instance
   const IS_ADMIN = (PORT === '8080' || PORT === '');
   const IS_PROJECT = !IS_ADMIN;
-
-  // Project port scan range
   const PORT_MIN = 8081;
   const PORT_MAX = 8100;
 
-  // Apply mode class to body
+  // Apply mode class
   if (IS_ADMIN) {
     document.body.classList.add('is-admin');
     document.title = 'Forge — Admin Console';
@@ -44,6 +70,7 @@ document.addEventListener('DOMContentLoaded', () => {
     database:  'Database Browser',
     storage:   'Storage',
     analytics: 'Analytics',
+    guide:     'Guide & FAQ',
     settings:  'Settings',
   };
 
@@ -56,59 +83,88 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
-  // ── Mobile Toggle ──
-  var mobileToggle = document.getElementById('mobile-toggle');
-  if (mobileToggle) mobileToggle.addEventListener('click', function() { sidebar.classList.toggle('open'); });
+  // Topbar toggles
+  const mobileToggle = document.getElementById('mobile-toggle');
+  if (mobileToggle) {
+    mobileToggle.addEventListener('click', () => {
+      sidebar.classList.toggle('open');
+      if (overlay) overlay.classList.toggle('active', sidebar.classList.contains('open'));
+    });
+  }
+  const desktopToggle = document.getElementById('desktop-toggle');
+  if (desktopToggle) {
+    desktopToggle.addEventListener('click', () => {
+      document.body.classList.toggle('sidebar-collapsed');
+      sidebar.classList.toggle('collapsed');
+    });
+  }
 
-  // ── Init ──
+  // ── Mobile Toggle + Overlay ──
+  if (overlay) {
+    overlay.addEventListener('click', function() {
+      sidebar.classList.remove('open');
+      overlay.classList.remove('active');
+    });
+  }
+
+  // ── Init — fetch data immediately ──
   generateSnippets();
   fetchHealth();
   fetchAnalyticsStats();
-  setInterval(function() { fetchHealth(); fetchAnalyticsStats(); }, 5000);
+  setInterval(function() { fetchHealth(); fetchAnalyticsStats(); }, 8000);
 
   // Hash Routing
   function handleHashChange() {
     var hash = window.location.hash.substring(1) || 'overview';
-    var link = document.querySelector('.nav-item[data-page="' + hash + '"]');
-    if (link) {
-      showPage(hash);
-    } else {
-      showPage('overview');
-    }
+    showPage(hash);
   }
   window.addEventListener('hashchange', handleHashChange);
-  
-  // Initialize page from hash
   handleHashChange();
 
-  // If project mode, try to detect project name from health endpoint
-  if (IS_PROJECT) {
-    fetchProjectIdentity();
-  }
+  // If project mode, detect identity
+  if (IS_PROJECT) fetchProjectIdentity();
 
   // ════════════════════════════════════
-  // PAGE ROUTER
+  // PAGE ROUTER (instant, no delays)
   // ════════════════════════════════════
   function showPage(pageName) {
-    var cur = document.querySelector('.page.active-page');
-    if (cur) { cur.style.animation = 'none'; cur.offsetHeight; cur.classList.remove('active-page'); }
+    // Validate page exists
     var target = document.getElementById('page-' + pageName);
-    if (target) target.classList.add('active-page');
+    if (!target) { pageName = 'overview'; target = document.getElementById('page-overview'); }
+
+    // Instant page switch — remove old, show new
+    var cur = document.querySelector('.page.active-page');
+    if (cur && cur !== target) {
+      cur.classList.remove('active-page');
+      cur.style.animation = 'none';
+    }
+    target.style.animation = '';
+    target.classList.add('active-page');
+
+    // Update nav
     document.querySelectorAll('.nav-item').forEach(function(a) { a.classList.toggle('active', a.dataset.page === pageName); });
     var t = document.getElementById('topbar-title');
     if (t) t.textContent = pageTitles[pageName] || pageName;
-    sidebar.classList.remove('open');
 
-    // Update hash without triggering hashchange event loop manually
+    // Close mobile sidebar
+    sidebar.classList.remove('open');
+    if (overlay) overlay.classList.remove('active');
+
+    // Update hash
     if (window.location.hash !== '#' + pageName) {
       history.pushState(null, null, '#' + pageName);
     }
 
+    // Reset database view
     if (pageName === 'database') {
       document.getElementById('db-collections-view').classList.remove('hidden');
       document.getElementById('db-document-view').classList.add('hidden');
     }
 
+    // Setup guide FAQ accordion
+    if (pageName === 'guide') initFaqAccordion();
+
+    // Fetch data for the page
     switch (pageName) {
       case 'projects':  scanProjects(); break;
       case 'auth':      fetchAuthData(); break;
@@ -117,6 +173,29 @@ document.addEventListener('DOMContentLoaded', () => {
       case 'analytics': fetchAnalyticsData(); break;
       case 'settings':  fetchSettingsData(); break;
     }
+
+    // Scroll to top of page content
+    var mainContent = document.querySelector('.main-content');
+    if (mainContent) mainContent.scrollTop = 0;
+  }
+
+  // ════════════════════════════════════
+  // FAQ ACCORDION
+  // ════════════════════════════════════
+  var faqInitialized = false;
+  function initFaqAccordion() {
+    if (faqInitialized) return;
+    faqInitialized = true;
+    document.querySelectorAll('.faq-question').forEach(function(q) {
+      q.addEventListener('click', function() {
+        var item = q.parentElement;
+        // Close others
+        document.querySelectorAll('.faq-item.open').forEach(function(other) {
+          if (other !== item) other.classList.remove('open');
+        });
+        item.classList.toggle('open');
+      });
+    });
   }
 
   // ════════════════════════════════════
@@ -131,7 +210,7 @@ document.addEventListener('DOMContentLoaded', () => {
     t.className = 'toast ' + type;
     t.innerHTML = '<span class="toast-icon">' + (icons[type] || 'ℹ') + '</span>' + escapeHtml(message);
     c.appendChild(t);
-    setTimeout(function() { t.classList.add('toast-exit'); setTimeout(function() { t.remove(); }, 300); }, 3500);
+    setTimeout(function() { t.classList.add('toast-exit'); setTimeout(function() { t.remove(); }, 300); }, 3000);
   }
 
   // ════════════════════════════════════
@@ -141,16 +220,17 @@ document.addEventListener('DOMContentLoaded', () => {
     var endpoint = API;
 
     document.getElementById('snippet-js').innerHTML =
-      '<span class="syn-cm">// Install: npm link @forge/client</span>\n' +
-      '<span class="syn-kw">import</span> { <span class="syn-fn">initializeApp</span> } <span class="syn-kw">from</span> <span class="syn-str">"@forge/client"</span>;\n\n' +
-      '<span class="syn-kw">const</span> <span class="syn-var">forge</span> = <span class="syn-fn">initializeApp</span>({\n' +
-      '  endpoint: <span class="syn-str">"' + endpoint + '"</span>\n' +
+      '<span class="syn-cm">// Connect from any JavaScript app</span>\n' +
+      '<span class="syn-kw">const</span> <span class="syn-var">FORGE</span> = <span class="syn-str">"' + endpoint + '"</span>;\n\n' +
+      '<span class="syn-cm">// Create a document</span>\n' +
+      '<span class="syn-kw">await</span> <span class="syn-fn">fetch</span>(<span class="syn-str">`${FORGE}/db/users`</span>, {\n' +
+      '  method: <span class="syn-str">"POST"</span>,\n' +
+      '  headers: { <span class="syn-str">"Content-Type"</span>: <span class="syn-str">"application/json"</span> },\n' +
+      '  body: <span class="syn-fn">JSON.stringify</span>({ name: <span class="syn-str">"Alice"</span>, role: <span class="syn-str">"admin"</span> })\n' +
       '});\n\n' +
-      '<span class="syn-cm">// Example: Create a document</span>\n' +
-      '<span class="syn-kw">await</span> <span class="syn-var">forge</span>.db.<span class="syn-fn">collection</span>(<span class="syn-str">"users"</span>).<span class="syn-fn">set</span>(<span class="syn-str">"user-1"</span>, {\n' +
-      '  name: <span class="syn-str">"Alice"</span>,\n' +
-      '  role: <span class="syn-str">"admin"</span>\n' +
-      '});';
+      '<span class="syn-cm">// Read documents</span>\n' +
+      '<span class="syn-kw">const</span> <span class="syn-var">res</span> = <span class="syn-kw">await</span> <span class="syn-fn">fetch</span>(<span class="syn-str">`${FORGE}/db/users`</span>);\n' +
+      '<span class="syn-kw">const</span> <span class="syn-var">data</span> = <span class="syn-kw">await</span> <span class="syn-var">res</span>.<span class="syn-fn">json</span>();';
 
     document.getElementById('snippet-curl').innerHTML =
       '<span class="syn-cm"># Health check</span>\n' +
@@ -201,9 +281,6 @@ document.addEventListener('DOMContentLoaded', () => {
   // PROJECT IDENTITY (Child Mode)
   // ════════════════════════════════════
   function fetchProjectIdentity() {
-    // On child instances, try to extract the project name from the config
-    // The systemd service description contains the project name
-    // For now, derive from port: "Project on :808X"
     var pnd = document.getElementById('project-name-display');
     var ppd = document.getElementById('project-port-display');
     if (pnd) pnd.textContent = 'Instance :' + PORT;
@@ -214,106 +291,287 @@ document.addEventListener('DOMContentLoaded', () => {
   // ════════════════════════════════════
   // PROJECTS (Admin Mode — Port Scanning)
   // ════════════════════════════════════
-  var projectsCache = [];
-
   var refreshBtn = document.getElementById('projects-refresh-btn');
   if (refreshBtn) refreshBtn.addEventListener('click', function() { scanProjects(); });
 
-  async function scanProjects() {
+  async function scanProjects(retryCount = 0) {
     var grid = document.getElementById('projects-grid');
     if (!grid) return;
 
-    // Show scanning state
-    grid.innerHTML = '';
-    var scanCount = PORT_MAX - PORT_MIN + 1;
-    for (var p = PORT_MIN; p <= PORT_MAX; p++) {
-      var placeholder = document.createElement('div');
-      placeholder.className = 'project-card';
-      placeholder.id = 'pcard-' + p;
-      placeholder.innerHTML =
-        '<div class="project-card-header">' +
-          '<div class="project-card-title">Port ' + p + '</div>' +
-          '<div class="project-status-dot scanning"></div>' +
-        '</div>' +
-        '<div class="project-card-meta">' +
-          '<div class="project-meta-row"><span class="meta-label">Status</span><span class="meta-value">Scanning...</span></div>' +
-        '</div>';
-      placeholder.style.display = 'none';
-      grid.appendChild(placeholder);
+    if (retryCount === 0) {
+      grid.innerHTML = '<div style="text-align:center;padding:1.5rem;color:var(--text-tertiary);font-size:0.82rem">Loading projects from engine...</div>';
     }
+    logActivity('GET', '/admin/projects' + (retryCount > 0 ? ' (Retry ' + retryCount + ')' : ''));
 
-    showToast('Scanning ports ' + PORT_MIN + '–' + PORT_MAX + '...', 'info');
-    logActivity('SCAN', '/ports/' + PORT_MIN + '-' + PORT_MAX);
+    try {
+      var res = await fetch(API + '/admin/projects');
+      if (!res.ok) throw new Error(await res.text());
+      var projects = await res.json();
+      projects = projects || [];
 
-    var activeCount = 0;
-    var allHealthy = true;
-    var promises = [];
+      document.getElementById('projects-active-count').textContent = projects.length;
+      document.getElementById('projects-health-status').textContent = projects.length > 0 ? 'Yes ✓' : '—';
 
-    for (var port = PORT_MIN; port <= PORT_MAX; port++) {
-      (function(p) {
-        var url = window.location.protocol + '//' + HOSTNAME + ':' + p + '/health';
-        var promise = fetchWithTimeout(url, 2000)
-          .then(function(res) { return res.json(); })
-          .then(function(data) {
-            activeCount++;
-            var card = document.getElementById('pcard-' + p);
-            if (card) {
-              card.style.display = '';
-              var name = data.project_name || 'Instance ' + p;
-              var version = data.version || '—';
-              var services = data.services ? Object.keys(data.services).length : 0;
-              card.innerHTML =
-                '<div class="project-card-header">' +
-                  '<div class="project-card-title">' + escapeHtml(name) + '</div>' +
-                  '<div class="project-status-dot online"></div>' +
-                '</div>' +
-                '<div class="project-card-meta">' +
-                  '<div class="project-meta-row"><span class="meta-label">Port</span><span class="meta-value">' + p + '</span></div>' +
-                  '<div class="project-meta-row"><span class="meta-label">Version</span><span class="meta-value">v' + escapeHtml(version) + '</span></div>' +
-                  '<div class="project-meta-row"><span class="meta-label">Services</span><span class="meta-value">' + services + ' active</span></div>' +
-                '</div>' +
-                '<div class="project-card-footer">' +
-                  '<div class="project-card-footer-buttons">' +
-                    '<a class="project-open-btn" href="' + window.location.protocol + '//' + HOSTNAME + ':' + p + '/dashboard" target="_blank">Open Console →</a>' +
-                    '<button class="project-delete-btn" data-port="' + p + '" data-name="' + escapeHtml(name) + '">Delete</button>' +
-                  '</div>' +
-                  '<span class="project-card-services">:' + p + '</span>' +
-                '</div>';
-            }
-          })
-          .catch(function() {
-            // Port not responsive — hide card
-            var card = document.getElementById('pcard-' + p);
-            if (card) card.style.display = 'none';
-          });
-        promises.push(promise);
-      })(port);
-    }
-
-    Promise.all(promises).then(function() {
-      document.getElementById('projects-active-count').textContent = activeCount;
-      document.getElementById('projects-health-status').textContent = activeCount > 0 ? (allHealthy ? 'Yes ✓' : 'Issues') : '—';
-
-      // Bind delete buttons
-      document.querySelectorAll('.project-delete-btn').forEach(function(btn) {
-        btn.addEventListener('click', function() {
-          showDeleteModal(this.dataset.name, this.dataset.port);
-        });
-      });
-
-      if (activeCount === 0) {
+      grid.innerHTML = '';
+      if (projects.length === 0) {
         grid.innerHTML =
           '<div class="empty-state" style="grid-column:1/-1">' +
             '<div class="empty-icon">📦</div>' +
             '<h3>No Projects Running</h3>' +
-            '<p>Deploy your first project to see it here.</p>' +
-            '<pre class="empty-code">./run-my-backend "My App"</pre>' +
+            '<p>Click "Deploy" to provision your first project.</p>' +
           '</div>';
-      }
+      } else {
+        projects.sort(function(a, b) { return a.port - b.port; });
+        projects.forEach(function(p) {
+          var card = document.createElement('div');
+          card.className = 'project-card';
+          card.innerHTML =
+            '<div class="project-card-header">' +
+              '<div class="project-card-title">' + escapeHtml(p.name) + '</div>' +
+              '<div class="project-status-dot online"></div>' +
+            '</div>' +
+            '<div class="project-card-meta">' +
+              '<div class="project-meta-row"><span class="meta-label">Port</span><span class="meta-value">' + p.port + '</span></div>' +
+              '<div class="project-meta-row"><span class="meta-label">Slug</span><span class="meta-value">' + escapeHtml(p.slug) + '</span></div>' +
+              '<div class="project-meta-row"><span class="meta-label">ID</span><span class="meta-value">' + escapeHtml(p.slug) + '</span></div>' +
+            '</div>' +
+            '<div class="project-card-footer">' +
+              '<div class="project-card-footer-buttons">' +
+                '<a class="project-open-btn" href="' + window.location.protocol + '//' + HOSTNAME + ':' + p.port + '/dashboard" target="_blank">Console</a>' +
+                '<button class="project-settings-btn" data-slug="' + p.slug + '">Settings</button>' +
+                '<button class="project-delete-btn" data-port="' + p.port + '" data-name="' + escapeHtml(p.name) + '">Delete</button>' +
+              '</div>' +
+              '<span class="project-card-services">:' + p.port + '</span>' +
+            '</div>';
+          grid.appendChild(card);
+        });
 
-      showToast('Found ' + activeCount + ' active project' + (activeCount !== 1 ? 's' : ''), activeCount > 0 ? 'success' : 'info');
-    });
+        // Bind buttons
+        document.querySelectorAll('.project-delete-btn').forEach(function(btn) {
+          btn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            showDeleteModal(this.dataset.name, this.dataset.port);
+          });
+        });
+        document.querySelectorAll('.project-settings-btn').forEach(function(btn) {
+          btn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            showSettingsModal(this.dataset.slug);
+          });
+        });
+      }
+      if (retryCount === 0) showToast('Sync complete', 'success');
+    } catch (e) {
+      if (retryCount < 2) {
+        console.warn('Sync failed, retrying...', e);
+        setTimeout(() => scanProjects(retryCount + 1), 1000);
+      } else {
+        grid.innerHTML = emptyState('⚠️', 'Sync Failed', 'Could not fetch project list from admin API.');
+        showToast('Failed to load projects: ' + e.message, 'error');
+      }
+    }
   }
+
+  // ════════════════════════════════════
+  // SETTINGS MODAL LOGIC
+  // ════════════════════════════════════
+  var settingsModal = document.getElementById('settings-modal');
+  var currentSettingsSlug = null;
+  var currentConfig = null;
+
+  function syncTogglePill(checkboxId, pillId) {
+    var cb = document.getElementById(checkboxId);
+    var pill = document.getElementById(pillId);
+    if (!cb || !pill) return;
+    if (cb.checked) pill.classList.add('on'); else pill.classList.remove('on');
+  }
+
+  // Wire toggle-switch-wrap clicks to sync pill visual
+  document.querySelectorAll('.toggle-switch-wrap').forEach(function(wrap) {
+    wrap.addEventListener('click', function(e) {
+      var cb = wrap.querySelector('input[type="checkbox"]');
+      if (!cb) return;
+      cb.checked = !cb.checked;
+      var pill = wrap.querySelector('.toggle-pill');
+      if (pill) { if (cb.checked) pill.classList.add('on'); else pill.classList.remove('on'); }
+      e.preventDefault();
+    });
+  });
+
+
+  async function showSettingsModal(slug) {
+    currentSettingsSlug = slug;
+    settingsModal.classList.add('active');
+    
+    // Reset fields
+    document.getElementById('settings-email-enabled').checked = false;
+    document.getElementById('settings-smtp-host').value = '';
+    document.getElementById('settings-smtp-port').value = '';
+    document.getElementById('settings-smtp-user').value = '';
+    document.getElementById('settings-smtp-pass').value = '';
+    document.getElementById('settings-smtp-from').value = '';
+
+    try {
+      var res = await fetch(API + '/admin/projects/' + slug + '/config');
+      if (!res.ok) throw new Error('Failed to load config');
+      currentConfig = await res.json();
+
+    // Populate SMTP
+    if (currentConfig.email) {
+      document.getElementById('settings-email-enabled').checked = currentConfig.email.enabled;
+      document.getElementById('settings-smtp-host').value = currentConfig.email.host || '';
+      document.getElementById('settings-smtp-port').value = currentConfig.email.port || '';
+      document.getElementById('settings-smtp-user').value = currentConfig.email.user || '';
+      document.getElementById('settings-smtp-pass').value = currentConfig.email.password || '';
+      document.getElementById('settings-smtp-from').value = currentConfig.email.from || '';
+    }
+    // Sync visual toggle pills
+    syncTogglePill('settings-email-enabled', 'email-toggle-pill');
+    syncTogglePill('settings-hosting-spa', 'spa-toggle-pill');
+
+    // Populate Database
+    if (currentConfig.database) {
+      document.getElementById('settings-db-conns').value = currentConfig.database.max_connections || 100;
+      document.getElementById('settings-db-cache').value = currentConfig.database.cache_size_mb || 128;
+    }
+
+    // Populate Storage
+    if (currentConfig.storage) {
+      document.getElementById('settings-storage-limit').value = currentConfig.storage.max_file_size || 104857600;
+      document.getElementById('settings-storage-types').value = currentConfig.storage.allowed_types || '*/*';
+    }
+
+    // Populate Functions
+    if (currentConfig.functions) {
+      document.getElementById('settings-func-timeout').value = currentConfig.functions.timeout || 60;
+      document.getElementById('settings-func-memory').value = currentConfig.functions.memory_limit || 256;
+      if (currentConfig.functions.env) {
+        var envText = Object.entries(currentConfig.functions.env).map(([k,v]) => k + '=' + v).join('\n');
+        document.getElementById('settings-func-env').value = envText;
+      }
+    }
+
+    // Populate Hosting
+    if (currentConfig.hosting) {
+      document.getElementById('settings-hosting-spa').checked = currentConfig.hosting.spa_mode !== false;
+      if (currentConfig.hosting.headers) {
+        var headerText = Object.entries(currentConfig.hosting.headers).map(([k,v]) => k + ': ' + v).join('\n');
+        document.getElementById('settings-hosting-headers').value = headerText;
+      }
+    }
+
+    // Populate Analytics
+    if (currentConfig.analytics) {
+      document.getElementById('settings-analytics-retention').value = currentConfig.analytics.retention_days || 90;
+    }
+
+    // Populate Real-time
+    if (currentConfig.realtime) {
+      document.getElementById('settings-rt-clients').value = currentConfig.realtime.max_clients || 1000;
+    }
+
+    // Populate Services Grid
+    var grid = document.getElementById('settings-services-grid');
+      grid.innerHTML = '';
+      var services = ['auth', 'database', 'storage', 'functions', 'hosting', 'analytics', 'realtime'];
+      services.forEach(function(s) {
+        var enabled = currentConfig[s] ? currentConfig[s].enabled : false;
+        var div = document.createElement('div');
+        div.className = 'service-toggle-item';
+        div.style.cssText = 'display:flex;align-items:center;gap:0.5rem;background:rgba(255,255,255,0.05);padding:0.5rem;border-radius:6px;border:1px solid var(--border-light)';
+        div.innerHTML = 
+          '<input type="checkbox" id="set-svc-' + s + '" ' + (enabled ? 'checked' : '') + '>' +
+          '<label for="set-svc-' + s + '" style="font-size:0.8rem;text-transform:capitalize;cursor:pointer">' + s + '</label>';
+        grid.appendChild(div);
+      });
+
+    } catch (e) {
+      showToast('Error loading settings: ' + e.message, 'error');
+    }
+  }
+
+  document.getElementById('save-settings-btn').addEventListener('click', async function() {
+    if (!currentSettingsSlug || !currentConfig) return;
+
+    // Update Email Config
+    if (!currentConfig.email) currentConfig.email = {};
+    currentConfig.email.enabled = document.getElementById('settings-email-enabled').checked;
+    currentConfig.email.host = document.getElementById('settings-smtp-host').value;
+    currentConfig.email.port = parseInt(document.getElementById('settings-smtp-port').value);
+    currentConfig.email.user = document.getElementById('settings-smtp-user').value;
+    currentConfig.email.password = document.getElementById('settings-smtp-pass').value;
+    currentConfig.email.from = document.getElementById('settings-smtp-from').value;
+
+    // Update Database Config
+    if (!currentConfig.database) currentConfig.database = {};
+    currentConfig.database.max_connections = parseInt(document.getElementById('settings-db-conns').value);
+    currentConfig.database.cache_size_mb = parseInt(document.getElementById('settings-db-cache').value);
+
+    // Update Storage Config
+    if (!currentConfig.storage) currentConfig.storage = {};
+    currentConfig.storage.max_file_size = parseInt(document.getElementById('settings-storage-limit').value);
+    currentConfig.storage.allowed_types = document.getElementById('settings-storage-types').value;
+
+    // Update Functions Config
+    if (!currentConfig.functions) currentConfig.functions = {};
+    currentConfig.functions.timeout = parseInt(document.getElementById('settings-func-timeout').value);
+    currentConfig.functions.memory_limit = parseInt(document.getElementById('settings-func-memory').value);
+    
+    // Parse Env Vars
+    var envText = document.getElementById('settings-func-env').value;
+    var envMap = {};
+    envText.split('\n').forEach(line => {
+      var parts = line.split('=');
+      if (parts.length >= 2) envMap[parts[0].trim()] = parts.slice(1).join('=').trim();
+    });
+    currentConfig.functions.env = envMap;
+
+    // Update Hosting Config
+    if (!currentConfig.hosting) currentConfig.hosting = {};
+    currentConfig.hosting.spa_mode = document.getElementById('settings-hosting-spa').checked;
+    
+    // Parse Headers
+    var headerText = document.getElementById('settings-hosting-headers').value;
+    var headerMap = {};
+    headerText.split('\n').forEach(line => {
+      var parts = line.split(':');
+      if (parts.length >= 2) headerMap[parts[0].trim()] = parts.slice(1).join(':').trim();
+    });
+    currentConfig.hosting.headers = headerMap;
+
+    // Update Analytics Config
+    if (!currentConfig.analytics) currentConfig.analytics = {};
+    currentConfig.analytics.retention_days = parseInt(document.getElementById('settings-analytics-retention').value);
+
+    // Update Real-time Config
+    if (!currentConfig.realtime) currentConfig.realtime = {};
+    currentConfig.realtime.max_clients = parseInt(document.getElementById('settings-rt-clients').value);
+
+    // Update Service Toggles
+    var services = ['auth', 'database', 'storage', 'functions', 'hosting', 'analytics', 'realtime'];
+    services.forEach(function(s) {
+      if (!currentConfig[s]) currentConfig[s] = {};
+      currentConfig[s].enabled = document.getElementById('set-svc-' + s).checked;
+    });
+
+    try {
+      var res = await fetch(API + '/admin/projects/' + currentSettingsSlug + '/config', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(currentConfig)
+      });
+      if (!res.ok) throw new Error(await res.text());
+
+      showToast('Settings saved! Service is restarting...', 'success');
+      settingsModal.classList.remove('active');
+      setTimeout(scanProjects, 2000); // Refresh list after restart
+    } catch (e) {
+      showToast('Failed to save: ' + e.message, 'error');
+    }
+  });
+
+  document.getElementById('close-settings-modal').addEventListener('click', function() { settingsModal.classList.remove('active'); });
+  document.getElementById('close-settings-modal-btn').addEventListener('click', function() { settingsModal.classList.remove('active'); });
 
   function fetchWithTimeout(url, ms) {
     var controller = new AbortController();
@@ -325,43 +583,123 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // ════════════════════════════════════
-  // DESTRUCTION PROTOCOL
+  // DEPLOY & DELETE
   // ════════════════════════════════════
+
+  // DEPLOY
+  var deployBtn = document.getElementById('projects-deploy-btn');
+  var deployModal = document.getElementById('deploy-modal');
+  var closeDeployBtn = document.getElementById('close-deploy-modal');
+  var confirmDeployBtn = document.getElementById('confirm-deploy-btn');
+  var deployInput = document.getElementById('deploy-project-name');
+
+  if (deployBtn) {
+    deployBtn.addEventListener('click', function() {
+      deployInput.value = '';
+      deployModal.classList.add('active');
+      setTimeout(function() { deployInput.focus(); }, 100);
+    });
+  }
+  if (closeDeployBtn) {
+    closeDeployBtn.addEventListener('click', function() { deployModal.classList.remove('active'); });
+  }
+
+  var selectAllBtn = document.getElementById('deploy-select-all');
+  if (selectAllBtn) {
+    selectAllBtn.addEventListener('click', function() {
+      var checkboxes = deployModal.querySelectorAll('.service-toggle input');
+      var allChecked = Array.from(checkboxes).every(function(c) { return c.checked; });
+      checkboxes.forEach(function(c) { c.checked = !allChecked; });
+      selectAllBtn.textContent = allChecked ? 'Select All' : 'Deselect All';
+    });
+  }
+
+  if (confirmDeployBtn) {
+    confirmDeployBtn.addEventListener('click', async function() {
+      var name = deployInput.value.trim();
+      if (!name) return showToast('Please enter a project name.', 'error');
+
+      var services = {
+        enable_auth: document.getElementById('svc-auth').checked,
+        enable_db: document.getElementById('svc-db').checked,
+        enable_storage: document.getElementById('svc-storage').checked,
+        enable_functions: document.getElementById('svc-functions').checked,
+        enable_hosting: document.getElementById('svc-hosting').checked,
+        enable_analytics: document.getElementById('svc-analytics').checked,
+        enable_realtime: document.getElementById('svc-realtime').checked
+      };
+
+      if (!Object.values(services).some(function(v) { return v; })) {
+        return showToast('Please select at least one service.', 'error');
+      }
+
+      confirmDeployBtn.textContent = 'Deploying...';
+      confirmDeployBtn.disabled = true;
+      try {
+        var res = await fetch(API + '/admin/projects', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: name, ...services })
+        });
+        if (!res.ok) throw new Error(await res.text());
+        showToast('Instance "' + name + '" deployed!', 'success');
+        deployModal.classList.remove('active');
+        scanProjects();
+      } catch (e) {
+        showToast('Deployment failed: ' + e.message, 'error');
+      } finally {
+        confirmDeployBtn.textContent = 'Deploy Instance';
+        confirmDeployBtn.disabled = false;
+      }
+    });
+  }
+
+  // DELETE — uses port number for reliable identification
+  var currentDeletePort = null;
+  var confirmDeleteBtn = document.getElementById('confirm-delete-btn');
+
   function showDeleteModal(name, port) {
     var modal = document.getElementById('delete-modal');
     if (!modal) return;
-    
     document.getElementById('delete-modal-project-name').textContent = name;
     document.getElementById('delete-modal-project-port').textContent = port;
-    
-    var slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
-    var code = 'sudo systemctl stop forge-' + slug + '\\n' +
-               'sudo systemctl disable forge-' + slug + '\\n' +
-               'sudo rm -rf /opt/forge/projects/' + slug + '\\n' +
-               'sudo rm -f /etc/systemd/system/forge-' + slug + '.service\\n' +
-               'sudo systemctl daemon-reload';
-               
-    document.getElementById('delete-modal-code').innerHTML = code;
-    
-    var copyBtn = document.getElementById('delete-modal-copy-btn');
-    var realCodeText = code.replace(/\\n/g, '\n');
-    copyBtn.onclick = function() {
-      navigator.clipboard.writeText(realCodeText).then(function() {
-        copyBtn.textContent = '✓ Copied to Clipboard';
-        copyBtn.classList.add('copied');
-        setTimeout(function() { copyBtn.textContent = '📋 Copy Command'; copyBtn.classList.remove('copied'); }, 2000);
-      });
-    };
-    
+    currentDeletePort = port;
     modal.classList.add('active');
   }
-  
-  var closeDelBtn = document.getElementById('close-delete-modal');
-  if (closeDelBtn) {
-    closeDelBtn.addEventListener('click', function() {
-      document.getElementById('delete-modal').classList.remove('active');
+
+  if (confirmDeleteBtn) {
+    confirmDeleteBtn.addEventListener('click', async function() {
+      if (!currentDeletePort) return;
+      confirmDeleteBtn.textContent = 'Destroying...';
+      confirmDeleteBtn.disabled = true;
+      try {
+        var res = await fetch(API + '/admin/projects/' + encodeURIComponent(currentDeletePort), { method: 'DELETE' });
+        var body = await res.text();
+        if (!res.ok) throw new Error(body);
+        showToast('Instance on port ' + currentDeletePort + ' terminated.', 'success');
+        document.getElementById('delete-modal').classList.remove('active');
+        currentDeletePort = null;
+        scanProjects();
+      } catch (e) {
+        showToast('Termination failed: ' + e.message, 'error');
+      } finally {
+        confirmDeleteBtn.textContent = 'Destroy Instance';
+        confirmDeleteBtn.disabled = false;
+      }
     });
   }
+
+  var closeDelBtn = document.getElementById('close-delete-modal');
+  if (closeDelBtn) {
+    closeDelBtn.addEventListener('click', function() { document.getElementById('delete-modal').classList.remove('active'); });
+  }
+
+  // Close modals on overlay click
+  document.querySelectorAll('.dialog-overlay').forEach(function(o) {
+    o.addEventListener('click', function(e) {
+      if (e.target === o) o.classList.remove('active');
+    });
+  });
 
   // ════════════════════════════════════
   // OVERVIEW
@@ -378,7 +716,7 @@ document.addEventListener('DOMContentLoaded', () => {
       document.getElementById('server-version').textContent = 'v' + (data.version || '0.1.0');
 
       var badge = document.getElementById('topbar-badge');
-      if (badge) { badge.textContent = '● Online'; badge.style.color = ''; badge.style.borderColor = ''; badge.style.background = ''; }
+      if (badge) { badge.textContent = '● Online'; badge.style.cssText = ''; }
 
       var dot = document.getElementById('pulse-dot');
       var ss = document.getElementById('sidebar-status');
@@ -388,7 +726,6 @@ document.addEventListener('DOMContentLoaded', () => {
       renderServices(data.services);
       logActivity('GET', '/health');
 
-      // On project mode, try to get project name from health data
       if (IS_PROJECT && data.project_name) {
         var pnd = document.getElementById('project-name-display');
         if (pnd) pnd.textContent = data.project_name;
@@ -517,7 +854,7 @@ document.addEventListener('DOMContentLoaded', () => {
           html += '<tr class="clickable-row" data-collection="' + escapeHtml(name) + '">' +
             '<td style="font-weight:500">📁 ' + escapeHtml(name) + '</td>' +
             '<td class="mono">' + count + '</td>' +
-            '<td style="color:var(--accent-indigo);font-size:0.78rem;font-weight:500">Browse →</td></tr>';
+            '<td style="color:var(--accent-indigo);font-size:0.75rem;font-weight:500">Browse →</td></tr>';
         });
         html += '</tbody></table>';
         document.getElementById('db-collections-list').innerHTML = html;
@@ -618,7 +955,7 @@ document.addEventListener('DOMContentLoaded', () => {
         var html = '<table class="data-table"><thead><tr><th>File</th><th>Size</th><th>Type</th><th>Action</th></tr></thead><tbody>';
         files.forEach(function(f) {
           var icon = getFileIcon(f.name || f.path || '');
-          html += '<tr><td style="font-weight:500">' + icon + ' ' + escapeHtml(f.name || f.path || '—') + '</td><td class="mono">' + formatBytes(f.size || 0) + '</td><td class="text-muted">' + escapeHtml(f.content_type || '—') + '</td><td><a href="' + API + '/storage/object/' + encodeURIComponent(f.path || f.name || '') + '" target="_blank" style="color:var(--accent-indigo);font-size:0.78rem;font-weight:500;text-decoration:none">Download ↓</a></td></tr>';
+          html += '<tr><td style="font-weight:500">' + icon + ' ' + escapeHtml(f.name || f.path || '—') + '</td><td class="mono">' + formatBytes(f.size || 0) + '</td><td class="text-muted">' + escapeHtml(f.content_type || '—') + '</td><td><a href="' + API + '/storage/object/' + encodeURIComponent(f.path || f.name || '') + '" target="_blank" style="color:var(--accent-indigo);font-size:0.75rem;font-weight:500;text-decoration:none">Download ↓</a></td></tr>';
         });
         html += '</tbody></table>';
         document.getElementById('storage-files-list').innerHTML = html;

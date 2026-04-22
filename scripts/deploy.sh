@@ -1,50 +1,80 @@
 #!/usr/bin/env bash
-# Forge deployment script for remote servers (e.g., Oracle Free Tier or DigitalOcean)
+# ═══════════════════════════════════════════════════
+# Forge — Full First-Time Deployment
+# Sets up Forge on a fresh server from scratch.
+#
+# Usage: ./scripts/deploy.sh <SERVER_IP>
+# ═══════════════════════════════════════════════════
 
 set -e
+export PATH="/usr/local/go/bin:$HOME/go/bin:$PATH"
 
 if [ -z "$1" ]; then
-  echo "❌ Usage: ./scripts/deploy.sh <SERVER_IP>"
-  echo "Example: ./scripts/deploy.sh 192.168.1.100"
+  echo ""
+  echo "  ⚡ Forge — First-Time Deploy"
+  echo "  ─────────────────────────────"
+  echo "  Usage: ./scripts/deploy.sh <SERVER_IP>"
+  echo "  Example: ./scripts/deploy.sh 129.153.10.50"
+  echo ""
   exit 1
 fi
 
-# Configuration
 SERVER_IP=$1
-SERVER_USER="ubuntu"  # Change to 'root' if using DigitalOcean
-CONFIG_FILE="forge.prod.json"
-RULES_FILE="forge.rules"
+SERVER_USER="${FORGE_SERVER_USER:-ubuntu}"
 
-echo "🔥 Building Forge for Linux AMD64 (x86_64)..."
-# Using amd64 for the VM.Standard.E2.1.Micro AMD instance
-GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o forge ./main.go
+echo ""
+echo "  ⚡ Forge — First-Time Deploy → $SERVER_IP"
+echo "  ─────────────────────────────"
+echo ""
 
-echo "🔥 Transporting files to $SERVER_USER@$SERVER_IP..."
+# Step 1: Build (dashboard embedded via go:embed)
+echo "  [1/4] Building binary (linux/amd64)..."
+GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o forge-linux .
+echo "        ✓ Built $(du -h forge-linux | cut -f1)"
 
-# Copy binary, config, systemd service, and frontend dashboard
-scp -r ./forge ./forge.prod.json ./forge.rules ./scripts/forge.service ./dashboard $SERVER_USER@$SERVER_IP:~/
+# Step 2: Upload binary + config files
+echo "  [2/4] Uploading files..."
+scp -o StrictHostKeyChecking=no \
+  forge-linux \
+  forge.prod.json \
+  forge.rules \
+  scripts/forge.service \
+  $SERVER_USER@$SERVER_IP:~/
 
-echo "🔥 Installing and Restarting Forge service..."
-ssh $SERVER_USER@$SERVER_IP << EOF
-  # Setup engine
+# Step 3: Install on server
+echo "  [3/4] Installing Forge on server..."
+ssh -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_IP << 'REMOTE'
+  # Setup directories
   sudo mkdir -p /opt/forge
-  sudo mv ~/forge /opt/forge/
+  sudo mkdir -p /var/lib/forge-data
+
+  # Install binary
+  sudo mv ~/forge-linux /opt/forge/forge
+  sudo chmod +x /opt/forge/forge
+
+  # Install config
   sudo mv ~/forge.prod.json /opt/forge/forge.json
   sudo mv ~/forge.rules /opt/forge/
-  sudo chown -R $SERVER_USER:$SERVER_USER /opt/forge
-  
-  # Setup database and hosting folders
-  sudo mkdir -p /var/lib/forge-data/hosting/projects
-  sudo rm -rf /var/lib/forge-data/hosting/projects/dashboard
-  sudo mv ~/dashboard /var/lib/forge-data/hosting/projects/
-  sudo chown -R $SERVER_USER:$SERVER_USER /var/lib/forge-data
+  sudo chown -R ubuntu:ubuntu /opt/forge /var/lib/forge-data
 
-  # Reload daemon
+  # Install systemd service
   sudo mv ~/forge.service /etc/systemd/system/forge.service
   sudo systemctl daemon-reload
   sudo systemctl enable forge
-  sudo systemctl restart forge
-  sudo systemctl status forge --no-pager
-EOF
+REMOTE
 
-echo "✅ Done! Forge is now live on $SERVER_IP:8080"
+# Step 4: Start
+echo "  [4/4] Starting Forge..."
+ssh -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_IP << 'REMOTE'
+  sudo systemctl restart forge
+  sleep 2
+  sudo systemctl status forge --no-pager -l | head -10
+REMOTE
+
+# Cleanup
+rm -f forge-linux
+
+echo ""
+echo "  ✅ Forge is live!"
+echo "  Dashboard: http://$SERVER_IP:8080/dashboard"
+echo ""

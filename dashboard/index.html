@@ -2,30 +2,109 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="description" content="Forge Console — Admin Dashboard for your self-hosted Backend-as-a-Service engine.">
   <meta name="theme-color" content="#06080d">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>Forge — Console</title>
   <link rel="stylesheet" href="/dashboard/style.css">
 </head>
 <body>
   <div class="background-mesh"></div>
   <div id="toast-container" class="toast-container"></div>
-  
-  <!-- MODAL: Destruction Protocol -->
+
+  <!-- Sidebar overlay for mobile -->
+  <div class="sidebar-overlay" id="sidebar-overlay"></div>
+
+  <!-- MODAL: Delete Project -->
   <div class="dialog-overlay" id="delete-modal">
-    <div class="dialog-box">
-      <div class="dialog-header">
-        <div class="dialog-title">⚠️ Destruction Protocol</div>
-        <button class="dialog-close" id="close-delete-modal">&times;</button>
+    <div class="dialog">
+      <div class="dialog-header" style="background:linear-gradient(135deg,rgba(225,29,72,0.08),rgba(225,29,72,0.03))">
+        <span class="dialog-title">
+          <span style="font-size:1.3rem">🗑️</span> Terminate Instance
+        </span>
+        <button class="dialog-close" id="close-delete-modal">✕</button>
       </div>
       <div class="dialog-body">
-        <p>To safely terminate and delete the node <strong><span id="delete-modal-project-name">...</span></strong> running on port <strong><span id="delete-modal-project-port">...</span></strong>, you must execute the raw stop commands directly in your Oracle server terminal. Forge doesn't authorize root modifications from the web dashboard for your safety.</p>
-        <div class="dialog-code" id="delete-modal-code">...</div>
-        <button class="dialog-copy-btn" id="delete-modal-copy-btn">📋 Copy Command</button>
+        <div style="background:rgba(225,29,72,0.06);border:1px solid rgba(225,29,72,0.18);border-radius:var(--radius-md);padding:1rem;margin-bottom:1.25rem;display:flex;gap:0.75rem;align-items:flex-start">
+          <span style="font-size:1.25rem;flex-shrink:0">⚠️</span>
+          <div>
+            <p style="color:var(--text-primary);font-weight:600;font-size:0.9rem;margin-bottom:0.25rem">This action is irreversible.</p>
+            <p style="color:var(--text-secondary);font-size:0.82rem;line-height:1.5">The systemd service will be stopped, the binary removed, and all project data permanently deleted from disk.</p>
+          </div>
+        </div>
+        <p style="color:var(--text-secondary);font-size:0.88rem;margin-bottom:0.25rem">You are about to destroy:</p>
+        <p style="color:var(--text-primary);font-weight:700;font-size:1rem;margin-bottom:0.25rem" id="delete-modal-project-name">…</p>
+        <p style="color:var(--text-tertiary);font-size:0.8rem;margin-bottom:1.5rem">Running on port <strong id="delete-modal-project-port">…</strong></p>
+        <button class="danger-btn" id="confirm-delete-btn">
+          🗑️ &nbsp;Yes, permanently destroy this instance
+        </button>
       </div>
     </div>
   </div>
+
+  <!-- MODAL: Deploy Project -->
+  <div class="dialog-overlay" id="deploy-modal">
+    <div class="dialog">
+      <div class="dialog-header" style="background:linear-gradient(135deg,rgba(99,102,241,0.08),rgba(139,92,246,0.04))">
+        <span class="dialog-title">
+          <span style="font-size:1.3rem">🚀</span> Deploy New Instance
+        </span>
+        <button class="dialog-close" id="close-deploy-modal">✕</button>
+      </div>
+      <div class="dialog-body">
+        <p style="margin-bottom:1.25rem;color:var(--text-tertiary);font-size:0.85rem">Provision an isolated child Forge environment with its own database, auth, and storage.</p>
+
+        <div class="modal-field">
+          <label class="modal-label">Project Name <span class="info-tip tip-down" data-tip="A unique slug for this instance. Becomes the systemd service name (e.g. 'my-app' → forge-my-app.service).">i</span></label>
+          <input type="text" id="deploy-project-name" class="modal-input" placeholder="e.g. production-api" autocomplete="off">
+        </div>
+
+        <div class="modal-field">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.6rem">
+            <label class="modal-label" style="margin-bottom:0">Enabled Services <span class="info-tip tip-down" data-tip="Choose which backend modules to activate. Disabled services won't start. You can change this anytime in Settings.">i</span></label>
+            <button id="deploy-select-all" style="background:none;border:none;color:var(--accent-indigo);font-size:0.7rem;font-weight:700;cursor:pointer;text-decoration:underline;text-underline-offset:2px">Deselect All</button>
+          </div>
+          <div class="services-toggle-grid">
+            <label class="service-toggle">
+              <input type="checkbox" id="svc-auth" checked>
+              <div class="toggle-card"><span class="toggle-icon">🔐</span><span class="toggle-label">Auth</span></div>
+            </label>
+            <label class="service-toggle">
+              <input type="checkbox" id="svc-db" checked>
+              <div class="toggle-card"><span class="toggle-icon">🗄️</span><span class="toggle-label">Database</span></div>
+            </label>
+            <label class="service-toggle">
+              <input type="checkbox" id="svc-storage" checked>
+              <div class="toggle-card"><span class="toggle-icon">📁</span><span class="toggle-label">Storage</span></div>
+            </label>
+            <label class="service-toggle">
+              <input type="checkbox" id="svc-functions" checked>
+              <div class="toggle-card"><span class="toggle-icon">⚡</span><span class="toggle-label">Functions</span></div>
+            </label>
+            <label class="service-toggle">
+              <input type="checkbox" id="svc-hosting" checked>
+              <div class="toggle-card"><span class="toggle-icon">🌐</span><span class="toggle-label">Hosting</span></div>
+            </label>
+            <label class="service-toggle">
+              <input type="checkbox" id="svc-analytics" checked>
+              <div class="toggle-card"><span class="toggle-icon">📊</span><span class="toggle-label">Analytics</span></div>
+            </label>
+            <label class="service-toggle">
+              <input type="checkbox" id="svc-realtime" checked>
+              <div class="toggle-card"><span class="toggle-icon">📡</span><span class="toggle-label">Real-time</span></div>
+            </label>
+          </div>
+        </div>
+
+        <button class="dialog-copy-btn" id="confirm-deploy-btn" style="margin-top:0.5rem">
+          🚀 &nbsp;Deploy Instance
+        </button>
+      </div>
+    </div>
+  </div>
+
 
   <div class="app-shell">
 
@@ -72,7 +151,12 @@
           Analytics
         </a>
 
-        <div class="nav-section-label" style="margin-top:0.75rem">System</div>
+        <div class="nav-section-label" style="margin-top:0.5rem">Resources</div>
+
+        <a class="nav-item" data-page="guide">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+          Guide & FAQ
+        </a>
 
         <a class="nav-item" data-page="settings">
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
@@ -98,17 +182,27 @@
       </div>
 
       <header class="topbar">
-        <div style="display:flex;align-items:center;gap:0.75rem;">
-          <button class="mobile-toggle" id="mobile-toggle" aria-label="Toggle sidebar">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
-          </button>
-          <span class="topbar-title" id="topbar-title">System Overview</span>
-        </div>
+      <div style="display:flex;align-items:center;gap:15px;">
+        <button class="mobile-toggle" id="mobile-toggle">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
+        </button>
+        <button class="desktop-toggle" id="desktop-toggle" style="background:transparent;border:0;color:var(--text-secondary);cursor:pointer;display:flex;align-items:center;">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h7"/></svg>
+        </button>
+        <h2 class="topbar-title" id="topbar-title">Admin Control Center</h2>
+        <span class="topbar-badge admin-only" id="topbar-badge">● Online</span>
+      </div>
         <div class="topbar-actions">
+          <button id="theme-toggle" style="background:transparent;border:0;color:var(--text-secondary);cursor:pointer;display:flex;align-items:center;margin-right:10px;">
+            <svg id="theme-icon-moon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+            <svg id="theme-icon-sun" class="hidden" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+          </button>
           <span class="mode-badge admin admin-only" id="mode-badge-admin">🛡 Admin</span>
           <span class="mode-badge project project-only" id="mode-badge-project">📦 Project</span>
           <span class="topbar-badge" id="topbar-badge">● Online</span>
-          <div class="avatar">A</div>
+          <a class="avatar" href="https://github.com/block-plant" target="_blank" title="GitHub: block-plant">
+            <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path></svg>
+          </a>
         </div>
       </header>
 
@@ -117,39 +211,39 @@
         <!-- ════ OVERVIEW PAGE ════ -->
         <section id="page-overview" class="page active-page">
           <header class="page-header">
-            <h1 id="overview-title">System Overview</h1>
+            <h1 id="overview-title">System Overview <span class="info-tip tip-right" data-tip="Live dashboard showing your Forge engine health, active services, and recent API activity.">i</span></h1>
             <p id="overview-subtitle">Real-time telemetry and health status of your Forge engine.</p>
           </header>
           <div class="metrics-grid">
             <div class="glass-card metric-card">
               <div class="metric-icon emerald">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
               </div>
               <div class="metric-info"><h3>Server Status</h3><h2 id="server-status" class="status-online">—</h2></div>
             </div>
             <div class="glass-card metric-card">
               <div class="metric-icon indigo">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
               </div>
               <div class="metric-info"><h3>Runtime Version</h3><h2 id="server-version">—</h2></div>
             </div>
             <div class="glass-card metric-card">
               <div class="metric-icon cyan">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
               </div>
               <div class="metric-info"><h3>Analytics Buffer</h3><h2 id="analytics-buffer">—</h2></div>
             </div>
           </div>
           <div class="two-col-grid">
             <div class="glass-card no-hover">
-              <div class="card-header"><span class="card-title">Active Services</span></div>
+              <div class="card-header"><span class="card-title">Active Services <span class="info-tip tip-down" data-tip="Services currently running on this instance. Green = healthy, Red = down.">i</span></span></div>
               <div id="services-list" class="services-grid">
                 <div class="skeleton skeleton-line"></div>
                 <div class="skeleton skeleton-line short"></div>
               </div>
             </div>
             <div class="glass-card no-hover">
-              <div class="card-header"><span class="card-title">Recent Activity</span></div>
+              <div class="card-header"><span class="card-title">Recent Activity <span class="info-tip tip-down" data-tip="Live log of API calls made from this dashboard. Useful for debugging connectivity.">i</span></span></div>
               <div id="activity-feed" class="activity-feed">
                 <div class="skeleton skeleton-line"></div>
                 <div class="skeleton skeleton-line short"></div>
@@ -157,7 +251,7 @@
             </div>
           </div>
           <div class="glass-card no-hover connect-panel">
-            <div class="card-header"><span class="card-title">🔗 Connect Your Project</span></div>
+            <div class="card-header"><span class="card-title">🔗 Connect Your Project <span class="info-tip tip-down" data-tip="Copy these code snippets into your app to start using the Forge API. Replace the URL with your server's address.">i</span></span></div>
             <div class="connect-tabs">
               <button class="connect-tab active" data-lang="js">JavaScript</button>
               <button class="connect-tab" data-lang="curl">cURL</button>
@@ -169,54 +263,42 @@
               <pre class="connect-code" id="snippet-curl"></pre>
               <pre class="connect-code" id="snippet-python"></pre>
             </div>
-            </div>
-          </div>
-
-          <!-- FAQ Box -->
-          <div class="faq-box">
-            <div class="faq-icon">💡</div>
-            <div class="faq-content">
-              <h4>System Commands <span>Manual</span></h4>
-              <p>Forge services run as persistent systemd daemon threads on your server.</p>
-              <ul>
-                <li><strong>Start/Stop Analytics:</strong> <code>sudo systemctl restart forge</code></li>
-                <li><strong>Update Dashboard UI:</strong> Run <code>./update-all-projects</code> in your workspace root.</li>
-                <li><strong>Port Whitelisting:</strong> Ports 8080-8100 must be opened in your Oracle Security List.</li>
-              </ul>
-            </div>
           </div>
         </section>
 
         <!-- ════ PROJECTS PAGE (Admin Only) ════ -->
         <section id="page-projects" class="page admin-only">
           <header class="page-header">
-            <h1>Projects</h1>
+            <h1>Projects <span class="info-tip tip-right" data-tip="Each project is an isolated Forge instance running on its own port (8081–8100) with independent data, auth, and storage.">i</span></h1>
             <p>Monitor and manage all deployed Forge instances across ports 8081–8100.</p>
           </header>
           <div class="metrics-grid">
             <div class="glass-card metric-card">
               <div class="metric-icon indigo">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>
               </div>
               <div class="metric-info"><h3>Active Projects</h3><h2 id="projects-active-count">—</h2></div>
             </div>
             <div class="glass-card metric-card">
               <div class="metric-icon emerald">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
               </div>
               <div class="metric-info"><h3>All Healthy</h3><h2 id="projects-health-status">—</h2></div>
             </div>
             <div class="glass-card metric-card">
               <div class="metric-icon cyan">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
               </div>
               <div class="metric-info"><h3>Port Range</h3><h2>8081–8100</h2></div>
             </div>
           </div>
           <div class="glass-card no-hover">
             <div class="card-header">
-              <span class="card-title">Deployed Instances</span>
-              <button class="back-btn" id="projects-refresh-btn">↻ Scan</button>
+              <span class="card-title">Deployed Instances <span class="info-tip tip-down" data-tip="Click a project card to open its dashboard. Use the gear icon for settings and the trash icon to destroy.">i</span></span>
+              <div style="display:flex;gap:0.4rem;flex-wrap:wrap">
+                <button class="back-btn" id="projects-deploy-btn" style="background:var(--accent-indigo);color:white;border-color:transparent">+ Deploy</button>
+                <button class="back-btn" id="projects-refresh-btn">↻ Scan</button>
+              </div>
             </div>
             <div id="projects-grid" class="projects-grid">
               <div class="skeleton skeleton-line"></div>
@@ -228,31 +310,31 @@
         <!-- ════ AUTH PAGE ════ -->
         <section id="page-auth" class="page">
           <header class="page-header">
-            <h1>Authentication</h1>
+            <h1>Authentication <span class="info-tip tip-right" data-tip="Built-in user management with email/password, JWT tokens, OTP verification, and session tracking.">i</span></h1>
             <p>Manage users, view sign-up activity, and configure auth providers.</p>
           </header>
           <div class="metrics-grid">
             <div class="glass-card metric-card">
               <div class="metric-icon violet">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
               </div>
               <div class="metric-info"><h3>Total Users</h3><h2 id="auth-total-users">—</h2></div>
             </div>
             <div class="glass-card metric-card">
               <div class="metric-icon emerald">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
               </div>
               <div class="metric-info"><h3>Signups Today</h3><h2 id="auth-signups-today">—</h2></div>
             </div>
             <div class="glass-card metric-card">
               <div class="metric-icon amber">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
               </div>
               <div class="metric-info"><h3>Active Sessions</h3><h2 id="auth-sessions">—</h2></div>
             </div>
           </div>
           <div class="glass-card no-hover mt-2">
-            <div class="card-header"><span class="card-title">Users</span></div>
+            <div class="card-header"><span class="card-title">Users <span class="info-tip tip-down" data-tip="All registered users in this instance. Users are created via POST /auth/signup.">i</span></span></div>
             <div id="auth-users-list" class="data-table-container">
               <div class="skeleton skeleton-line"></div>
               <div class="skeleton skeleton-line short"></div>
@@ -263,31 +345,31 @@
         <!-- ════ DATABASE PAGE ════ -->
         <section id="page-database" class="page">
           <header class="page-header">
-            <h1>Database Browser</h1>
+            <h1>Database Browser <span class="info-tip tip-right" data-tip="NoSQL document store. Data is organized into collections of JSON documents, similar to Firestore.">i</span></h1>
             <p>Browse collections, inspect documents, and run queries.</p>
           </header>
           <div class="metrics-grid">
             <div class="glass-card metric-card">
               <div class="metric-icon indigo">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
               </div>
               <div class="metric-info"><h3>Collections</h3><h2 id="db-collections-count">—</h2></div>
             </div>
             <div class="glass-card metric-card">
               <div class="metric-icon cyan">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
               </div>
               <div class="metric-info"><h3>Total Documents</h3><h2 id="db-documents-count">—</h2></div>
             </div>
             <div class="glass-card metric-card">
               <div class="metric-icon rose">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
               </div>
               <div class="metric-info"><h3>Engine Status</h3><h2 id="db-wal-seq">—</h2></div>
             </div>
           </div>
           <div id="db-collections-view" class="glass-card no-hover mt-2">
-            <div class="card-header"><span class="card-title">Collections</span></div>
+            <div class="card-header"><span class="card-title">Collections <span class="info-tip tip-down" data-tip="Collections are created automatically when you insert your first document via POST /db/{name}.">i</span></span></div>
             <div id="db-collections-list" class="data-table-container">
               <div class="skeleton skeleton-line"></div>
               <div class="skeleton skeleton-line short"></div>
@@ -295,7 +377,7 @@
           </div>
           <div id="db-document-view" class="glass-card no-hover mt-2 hidden">
             <div class="doc-browser-header">
-              <div style="display:flex;align-items:center;gap:0.75rem;">
+              <div style="display:flex;align-items:center;gap:0.6rem;">
                 <button class="back-btn" id="db-back-btn">← Back</button>
                 <span class="card-title" id="db-doc-title">Collection</span>
               </div>
@@ -303,36 +385,24 @@
             </div>
             <div id="db-documents-list" class="doc-cards"></div>
           </div>
-          <!-- FAQ Box -->
-          <div class="faq-box">
-            <div class="faq-icon">💡</div>
-            <div class="faq-content">
-              <h4>Database Engine <span>Manual</span></h4>
-              <p>Forge implements a custom Key-Value store on top of an LSM-Tree derivative.</p>
-              <ul>
-                <li><strong>REST API:</strong> You can directly manipulate data by sending POST/GET requests to <code>/db/{collection}</code>.</li>
-                <li><strong>Data Isolation:</strong> Each project folder in <code>/opt/forge/projects/{slug}/data</code> acts as a completely isolated SQLite/LSM namespace.</li>
-              </ul>
-            </div>
-          </div>
         </section>
 
         <!-- ════ STORAGE PAGE ════ -->
         <section id="page-storage" class="page">
           <header class="page-header">
-            <h1>Storage</h1>
+            <h1>Storage <span class="info-tip tip-right" data-tip="File storage engine for uploads. Files are persisted on disk and served via signed URLs or direct download.">i</span></h1>
             <p>Upload, browse, and manage files stored in your Forge backend.</p>
           </header>
           <div class="metrics-grid">
             <div class="glass-card metric-card">
               <div class="metric-icon indigo">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
               </div>
               <div class="metric-info"><h3>Total Files</h3><h2 id="storage-file-count">—</h2></div>
             </div>
             <div class="glass-card metric-card">
               <div class="metric-icon cyan">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="21 15 21 21 3 21 3 15"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="21 15 21 21 3 21 3 15"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
               </div>
               <div class="metric-info"><h3>Storage Used</h3><h2 id="storage-size">—</h2></div>
             </div>
@@ -344,7 +414,7 @@
             <input type="file" class="upload-input" id="upload-input" multiple>
           </div>
           <div class="glass-card no-hover">
-            <div class="card-header"><span class="card-title">Files</span></div>
+            <div class="card-header"><span class="card-title">Files <span class="info-tip tip-down" data-tip="All uploaded files. Click to download. Upload via drag-and-drop above or POST /storage/upload/{path}.">i</span></span></div>
             <div id="storage-files-list">
               <div class="skeleton skeleton-line"></div>
               <div class="skeleton skeleton-line short"></div>
@@ -355,31 +425,31 @@
         <!-- ════ ANALYTICS PAGE ════ -->
         <section id="page-analytics" class="page">
           <header class="page-header">
-            <h1>Analytics</h1>
+            <h1>Analytics <span class="info-tip tip-right" data-tip="Track custom events from your app. Send events via POST /analytics/track and view aggregated stats here.">i</span></h1>
             <p>Event tracking, time-series data, and usage metrics.</p>
           </header>
           <div class="metrics-grid">
             <div class="glass-card metric-card">
               <div class="metric-icon emerald">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
               </div>
               <div class="metric-info"><h3>Events Today</h3><h2 id="analytics-events-today">—</h2></div>
             </div>
             <div class="glass-card metric-card">
               <div class="metric-icon rose">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
               </div>
               <div class="metric-info"><h3>Top Event</h3><h2 id="analytics-top-event">—</h2></div>
             </div>
             <div class="glass-card metric-card">
               <div class="metric-icon violet">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
               </div>
               <div class="metric-info"><h3>Log Days</h3><h2 id="analytics-log-days">—</h2></div>
             </div>
           </div>
           <div class="glass-card no-hover mt-2">
-            <div class="card-header"><span class="card-title">Event Counters</span></div>
+            <div class="card-header"><span class="card-title">Event Counters <span class="info-tip tip-down" data-tip="Aggregated counts per event type. Events are tracked via POST /analytics/track with a { name, properties } body.">i</span></span></div>
             <div id="analytics-counters" class="data-table-container">
               <div class="skeleton skeleton-line"></div>
               <div class="skeleton skeleton-line short"></div>
@@ -387,10 +457,123 @@
           </div>
         </section>
 
+        <!-- ════ GUIDE & FAQ PAGE ════ -->
+        <section id="page-guide" class="page">
+          <header class="page-header">
+            <h1>Guide & FAQ</h1>
+            <p>Everything you need to know about connecting Forge to your project.</p>
+          </header>
+
+          <div class="guide-hero">
+            <h2>What is Forge?</h2>
+            <p>Forge is a self-hosted Backend-as-a-Service (BaaS) — think of it as your own private Firebase. It gives your app a complete backend with zero cloud lock-in. You host it, you own it, your data stays with you.</p>
+          </div>
+
+          <div class="card-header" style="margin-bottom:0.5rem"><span class="card-title">🧩 What Forge Adds to Your Project</span></div>
+          <div class="guide-grid">
+            <div class="guide-card">
+              <div class="guide-card-icon">🔐</div>
+              <h3>Authentication</h3>
+              <p>Ready-to-use user signup, login, and session management. Supports email/password auth with JWT tokens — no need to build auth from scratch.</p>
+            </div>
+            <div class="guide-card">
+              <div class="guide-card-icon">🗄️</div>
+              <h3>Database</h3>
+              <p>A document-based NoSQL database with collections and documents — similar to Firestore. Store, query, and organize your app's data with simple REST calls.</p>
+            </div>
+            <div class="guide-card">
+              <div class="guide-card-icon">📁</div>
+              <h3>File Storage</h3>
+              <p>Upload and serve files (images, PDFs, videos) via a simple API. Each file gets a permanent URL you can use directly in your app.</p>
+            </div>
+            <div class="guide-card">
+              <div class="guide-card-icon">📊</div>
+              <h3>Analytics</h3>
+              <p>Track custom events from your app (page views, button clicks, purchases). See real-time counters and daily stats — no third-party scripts needed.</p>
+            </div>
+            <div class="guide-card">
+              <div class="guide-card-icon">⚡</div>
+              <h3>Real-Time Updates</h3>
+              <p>WebSocket-powered live data sync. Subscribe to database changes and get instant updates pushed to your app — perfect for chat, dashboards, and collaboration tools.</p>
+            </div>
+            <div class="guide-card">
+              <div class="guide-card-icon">🌐</div>
+              <h3>Static Hosting</h3>
+              <p>Deploy your frontend (HTML, CSS, JS) directly on Forge. It serves your site with proper MIME types, caching, and gzip — no separate hosting needed.</p>
+            </div>
+          </div>
+
+          <div class="glass-card no-hover mt-2">
+            <div class="card-header"><span class="card-title">🚀 Quick Start — Connect in 60 Seconds</span></div>
+            <div style="font-size:0.82rem;color:var(--text-secondary);line-height:1.7">
+              <p style="margin-bottom:0.75rem"><strong style="color:var(--text-primary)">Step 1:</strong> Find your Forge endpoint URL (shown in Settings, e.g., <code style="background:rgba(0,0,0,0.3);padding:1px 4px;border-radius:3px;color:var(--accent-cyan);font-size:0.72rem">http://your-server:8080</code>).</p>
+              <p style="margin-bottom:0.75rem"><strong style="color:var(--text-primary)">Step 2:</strong> Create a user account:</p>
+              <pre class="empty-code" style="margin-bottom:0.75rem;display:block">curl -X POST http://your-server:8080/auth/signup \
+  -H "Content-Type: application/json" \
+  -d '{"email":"you@example.com","password":"your-password"}'</pre>
+              <p style="margin-bottom:0.75rem"><strong style="color:var(--text-primary)">Step 3:</strong> Start using the database:</p>
+              <pre class="empty-code" style="margin-bottom:0.75rem;display:block">curl -X POST http://your-server:8080/db/todos \
+  -H "Content-Type: application/json" \
+  -d '{"task":"Build something great","done":false}'</pre>
+              <p><strong style="color:var(--text-primary)">Step 4:</strong> Read it back:</p>
+              <pre class="empty-code" style="display:block">curl http://your-server:8080/db/todos</pre>
+            </div>
+          </div>
+
+          <div class="glass-card no-hover mt-2">
+            <div class="card-header"><span class="card-title">❓ Frequently Asked Questions</span></div>
+            <div class="faq-accordion" id="faq-accordion">
+              <div class="faq-item">
+                <div class="faq-question">How is Forge different from Firebase? <span class="faq-chevron">▼</span></div>
+                <div class="faq-answer">Firebase is a cloud service owned by Google — your data lives on their servers. Forge is self-hosted, meaning you run it on your own machine or VPS. You get the same features (auth, database, storage, analytics) but with full ownership of your data and zero recurring costs beyond your server.</div>
+              </div>
+              <div class="faq-item">
+                <div class="faq-question">What languages/frameworks can I use with Forge? <span class="faq-chevron">▼</span></div>
+                <div class="faq-answer">Any language that can make HTTP requests. Forge exposes a REST API, so it works with JavaScript, Python, Go, Swift, Kotlin, Flutter, React Native, or any other language. Just make <code>fetch()</code> or <code>requests.post()</code> calls to your Forge server.</div>
+              </div>
+              <div class="faq-item">
+                <div class="faq-question">Do I need to install anything on my app? <span class="faq-chevron">▼</span></div>
+                <div class="faq-answer">No SDK required. Forge uses standard REST APIs. You can use plain <code>fetch()</code> in JavaScript, the <code>requests</code> library in Python, or <code>curl</code> from the terminal. We plan to release optional SDKs for convenience, but they're not required.</div>
+              </div>
+              <div class="faq-item">
+                <div class="faq-question">How do I secure my data? <span class="faq-chevron">▼</span></div>
+                <div class="faq-answer">Forge includes built-in authentication with JWT tokens. Users sign up and log in through the auth endpoints. You can protect your API by passing the JWT token in the <code>Authorization</code> header. Rate limiting and CORS are also built in.</div>
+              </div>
+              <div class="faq-item">
+                <div class="faq-question">Can I run multiple projects on one server? <span class="faq-chevron">▼</span></div>
+                <div class="faq-answer">Yes! The Admin Console (port 8080) can deploy and manage multiple isolated project instances, each running on its own port (8081–8100). Each project gets its own database, storage, and auth — completely independent from each other.</div>
+              </div>
+              <div class="faq-item">
+                <div class="faq-question">What are the system requirements? <span class="faq-chevron">▼</span></div>
+                <div class="faq-answer">Forge is written in pure Go with zero external dependencies. It runs on any Linux server, Mac, or Windows machine. A small VPS (1 CPU, 1 GB RAM) is enough for development and light production use.</div>
+              </div>
+              <div class="faq-item">
+                <div class="faq-question">Where does my data get stored? <span class="faq-chevron">▼</span></div>
+                <div class="faq-answer">All data is stored locally on your server's filesystem. Database documents, uploaded files, and user accounts are saved in the project's data directory (typically <code>/var/lib/forge-data/</code>). Nothing ever leaves your server.</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="faq-box" style="margin-top:1.25rem">
+            <div class="faq-icon">💡</div>
+            <div class="faq-content">
+              <h4>API Reference <span>Cheatsheet</span></h4>
+              <ul>
+                <li><strong>Auth:</strong> <code>POST /auth/signup</code>, <code>POST /auth/login</code></li>
+                <li><strong>Database:</strong> <code>POST /db/{collection}</code>, <code>GET /db/{collection}</code></li>
+                <li><strong>Storage:</strong> <code>POST /storage/upload/{path}</code>, <code>GET /storage/object/{path}</code></li>
+                <li><strong>Analytics:</strong> <code>POST /analytics/track</code>, <code>GET /analytics/stats</code></li>
+                <li><strong>WebSocket:</strong> <code>GET /ws</code> (upgrade connection)</li>
+                <li><strong>Health:</strong> <code>GET /health</code></li>
+              </ul>
+            </div>
+          </div>
+        </section>
+
         <!-- ════ SETTINGS PAGE ════ -->
         <section id="page-settings" class="page">
           <header class="page-header">
-            <h1>Settings</h1>
+            <h1>Settings <span class="info-tip tip-right" data-tip="View server configuration, connection details, and runtime information for this Forge instance.">i</span></h1>
             <p>Server configuration and project settings.</p>
           </header>
           <div class="glass-card no-hover mt-1">
@@ -406,6 +589,164 @@
     </div>
   </div>
 
+  <!-- ════ SETTINGS MODAL ════ -->
+  <div class="dialog-overlay" id="settings-modal">
+    <div class="glass-card dialog-card">
+      <div class="dialog-header" style="background:linear-gradient(135deg,rgba(99,102,241,0.06),rgba(34,211,238,0.03))">
+        <span class="dialog-title">⚙️ Project Settings</span>
+        <button class="dialog-close" id="close-settings-modal">✕</button>
+      </div>
+
+      <div class="dialog-body" style="max-height:70vh;overflow-y:auto;padding-right:0.25rem">
+
+        <!-- 📧 SMTP -->
+        <div class="settings-section-title">📧 SMTP Configuration <span class="info-tip tip-down" data-tip="Configure your email server for OTP codes, password resets, and welcome emails. Gmail: use an App Password.">i</span></div>
+        <div class="settings-section-desc">Real email delivery for OTP and notifications. Leave blank to use console-only mode (no emails sent).</div>
+
+        <label class="toggle-switch-wrap" for="settings-email-enabled">
+          <span>Enable Email Service</span>
+          <div class="toggle-pill" id="email-toggle-pill"></div>
+          <input type="checkbox" id="settings-email-enabled" style="display:none">
+        </label>
+
+        <div class="settings-form-grid">
+          <div class="modal-field">
+            <label class="modal-label">SMTP Host</label>
+            <input type="text" id="settings-smtp-host" class="modal-input" placeholder="smtp.gmail.com">
+            <p class="modal-hint">Default: <code>smtp.gmail.com</code></p>
+          </div>
+          <div class="modal-field">
+            <label class="modal-label">Port</label>
+            <input type="number" id="settings-smtp-port" class="modal-input" placeholder="587">
+            <p class="modal-hint">Default: <code>587</code> (TLS)</p>
+          </div>
+        </div>
+        <div class="settings-form-grid">
+          <div class="modal-field">
+            <label class="modal-label">Username</label>
+            <input type="text" id="settings-smtp-user" class="modal-input" placeholder="user@gmail.com">
+            <p class="modal-hint">Your email login address</p>
+          </div>
+          <div class="modal-field">
+            <label class="modal-label">Password</label>
+            <input type="password" id="settings-smtp-pass" class="modal-input" placeholder="••••••••">
+            <p class="modal-hint">Gmail: use an App Password</p>
+          </div>
+        </div>
+        <div class="modal-field">
+          <label class="modal-label">Sender Address (From)</label>
+          <input type="text" id="settings-smtp-from" class="modal-input" placeholder="Forge <noreply@yourdomain.com>">
+          <p class="modal-hint">Default: <code>Forge &lt;noreply@yourdomain.com&gt;</code> — shown as the email sender</p>
+        </div>
+
+        <!-- 🗄️ Database -->
+        <div class="settings-divider">
+          <div class="settings-section-title">🗄️ Database <span class="info-tip tip-down" data-tip="Tune the document engine. Higher connections and cache improve throughput at the cost of memory.">i</span></div>
+        </div>
+        <div class="settings-form-grid">
+          <div class="modal-field">
+            <label class="modal-label">Max Connections</label>
+            <input type="number" id="settings-db-conns" class="modal-input" placeholder="100">
+            <p class="modal-hint">Default: <code>100</code> simultaneous connections</p>
+          </div>
+          <div class="modal-field">
+            <label class="modal-label">Cache Size (MB)</label>
+            <input type="number" id="settings-db-cache" class="modal-input" placeholder="128">
+            <p class="modal-hint">Default: <code>128 MB</code> in-memory cache</p>
+          </div>
+        </div>
+
+
+        <!-- 📁 Storage -->
+        <div class="settings-divider">
+          <div class="settings-section-title">📁 Storage <span class="info-tip tip-down" data-tip="Control upload limits. Max size is in bytes: 104857600 = 100 MB. Use MIME globs like 'image/*'.">i</span></div>
+        </div>
+        <div class="modal-field">
+          <label class="modal-label">Max File Size (bytes)</label>
+          <input type="number" id="settings-storage-limit" class="modal-input" placeholder="104857600">
+          <p class="modal-hint">Default: <code>104857600</code> (100 MB). Uploads larger than this will be rejected.</p>
+        </div>
+        <div class="modal-field">
+          <label class="modal-label">Allowed MIME Types</label>
+          <input type="text" id="settings-storage-types" class="modal-input" placeholder="image/*, application/pdf">
+          <p class="modal-hint">Default: <code>*/*</code> (all types allowed). Comma-separated globs.</p>
+        </div>
+
+        <!-- ⚡ Functions -->
+        <div class="settings-divider">
+          <div class="settings-section-title">⚡ Functions <span class="info-tip tip-down" data-tip="Serverless runtime settings. Timeout caps execution; memory limits RAM per invocation. Env vars are injected at startup.">i</span></div>
+        </div>
+        <div class="settings-form-grid">
+          <div class="modal-field">
+            <label class="modal-label">Timeout (sec)</label>
+            <input type="number" id="settings-func-timeout" class="modal-input" placeholder="60">
+            <p class="modal-hint">Default: <code>60 s</code>. Functions exceeding this are killed.</p>
+          </div>
+          <div class="modal-field">
+            <label class="modal-label">Memory (MB)</label>
+            <input type="number" id="settings-func-memory" class="modal-input" placeholder="256">
+            <p class="modal-hint">Default: <code>256 MB</code> per invocation.</p>
+          </div>
+        </div>
+        <div class="modal-field">
+          <label class="modal-label">Environment Variables <span style="font-weight:400;text-transform:none;letter-spacing:0;font-size:0.7rem;color:var(--text-tertiary)">(KEY=VALUE, one per line)</span></label>
+          <textarea id="settings-func-env" class="modal-input" style="height:80px" placeholder="STRIPE_KEY=sk_test_...&#10;DB_PASSWORD=secret"></textarea>
+          <p class="modal-hint">Leave blank for no extra env vars. These are injected at function startup.</p>
+        </div>
+
+        <!-- 🌐 Hosting -->
+        <div class="settings-divider">
+          <div class="settings-section-title">🌐 Hosting <span class="info-tip tip-down" data-tip="Static site hosting. SPA mode redirects all 404s to index.html for client-side routing.">i</span></div>
+        </div>
+        <label class="toggle-switch-wrap" for="settings-hosting-spa">
+          <span>SPA Mode — redirect 404 → index.html</span>
+          <div class="toggle-pill" id="spa-toggle-pill"></div>
+          <input type="checkbox" id="settings-hosting-spa" style="display:none">
+        </label>
+        <div class="modal-field">
+          <label class="modal-label">Custom Response Headers <span style="font-weight:400;text-transform:none;letter-spacing:0;font-size:0.7rem">(KEY: Value)</span></label>
+          <textarea id="settings-hosting-headers" class="modal-input" style="height:60px" placeholder="X-Custom-Header: value"></textarea>
+          <p class="modal-hint">Default: none. Added to every static file response.</p>
+        </div>
+
+        <!-- 📊 Analytics -->
+        <div class="settings-divider">
+          <div class="settings-section-title">📊 Analytics <span class="info-tip tip-down" data-tip="How long event data is retained before auto-cleanup. Set to 0 for unlimited.">i</span></div>
+        </div>
+        <div class="modal-field">
+          <label class="modal-label">Data Retention (days)</label>
+          <input type="number" id="settings-analytics-retention" class="modal-input" placeholder="90">
+          <p class="modal-hint">Default: <code>90 days</code>. Set to <code>0</code> for unlimited retention.</p>
+        </div>
+
+        <!-- 📡 Real-time -->
+        <div class="settings-divider">
+          <div class="settings-section-title">📡 Real-time <span class="info-tip tip-down" data-tip="WebSocket engine. Max clients limits simultaneous connections to prevent resource exhaustion.">i</span></div>
+        </div>
+        <div class="modal-field">
+          <label class="modal-label">Max Concurrent Clients</label>
+          <input type="number" id="settings-rt-clients" class="modal-input" placeholder="1000">
+          <p class="modal-hint">Default: <code>1000</code> simultaneous WebSocket connections.</p>
+        </div>
+
+        <!-- 🛠️ Services -->
+        <div class="settings-divider">
+          <div class="settings-section-title">🛠️ Enabled Services</div>
+          <div class="settings-section-desc">Toggle which backend modules are active for this instance.</div>
+        </div>
+        <div class="services-toggle-grid" id="settings-services-grid" style="grid-template-columns:repeat(auto-fill,minmax(100px,1fr))"></div>
+
+
+      </div>
+
+      <div class="dialog-footer">
+        <button class="secondary-btn" id="close-settings-modal-btn">Cancel</button>
+        <button class="primary-btn" id="save-settings-btn">💾 &nbsp;Save &amp; Restart</button>
+      </div>
+    </div>
+  </div>
+
   <script src="/dashboard/app.js"></script>
 </body>
 </html>
+
