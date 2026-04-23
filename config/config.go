@@ -276,6 +276,26 @@ func (c *Config) Address() string {
 	return fmt.Sprintf("%s:%d", c.Server.Host, c.Server.Port)
 }
 
+// ValidateEmailConfig checks if SMTP settings are provided if email is enabled.
+func (c *Config) ValidateEmailConfig() error {
+	if !c.Email.Enabled {
+		return nil
+	}
+	if c.Email.Host == "" {
+		return fmt.Errorf("SMTP host is required when email is enabled")
+	}
+	if c.Email.User == "" {
+		return fmt.Errorf("SMTP user is required when email is enabled")
+	}
+	if c.Email.Password == "" {
+		return fmt.Errorf("SMTP password is required when email is enabled")
+	}
+	if c.Email.From == "" {
+		return fmt.Errorf("SMTP from address is required when email is enabled")
+	}
+	return nil
+}
+
 // ResolveDataPath resolves a relative path against the data directory.
 func (c *Config) ResolveDataPath(parts ...string) string {
 	allParts := append([]string{c.DataDir}, parts...)

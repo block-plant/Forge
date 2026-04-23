@@ -3,13 +3,16 @@ package dashboard
 import (
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/ayushkunwarsingh/forge/server"
 )
@@ -29,6 +32,445 @@ type ProjectInfo struct {
 	Name string `json:"name"`
 	Slug string `json:"slug"`
 	Port int    `json:"port"`
+}
+
+type serviceConfig struct {
+	Enabled bool `json:"enabled"`
+}
+
+type projectConfig struct {
+	Server struct {
+		Port int `json:"port"`
+	} `json:"server"`
+	Auth      serviceConfig `json:"auth"`
+	Database  serviceConfig `json:"database"`
+	Storage   serviceConfig `json:"storage"`
+	Functions serviceConfig `json:"functions"`
+	Hosting   serviceConfig `json:"hosting"`
+	Analytics serviceConfig `json:"analytics"`
+	Realtime  serviceConfig `json:"realtime"`
+	DataDir   string        `json:"data_dir"`
+}
+
+type projectSummary struct {
+	Name      string                    `json:"name"`
+	Slug      string                    `json:"slug"`
+	Port      int                       `json:"port"`
+	Health    string                    `json:"health"`
+	Services  map[string]map[string]any `json:"services"`
+	LastError string                    `json:"last_error,omitempty"`
+}
+
+type purgeRequest struct {
+	Confirm string   `json:"confirm"`
+	Scopes  []string `json:"scopes"`
+}
+
+var allowedPurgeScopes = map[string]bool{
+	"auth":      true,
+	"database":  true,
+	"storage":   true,
+	"hosting":   true,
+	"analytics": true,
+	"functions": true,
+	"realtime":  true,
+	"all":       true,
+}
+
+func projectDataDir(slug string, cfg projectConfig) string {
+	if strings.TrimSpace(cfg.DataDir) != "" {
+		return cfg.DataDir
+	}
+	return filepath.Join("/var/lib/forge-data", slug)
+}
+
+func wipeDirContents(root string) error {
+	if strings.TrimSpace(root) == "" {
+		return fmt.Errorf("empty directory path")
+	}
+	if _, err := os.Stat(root); os.IsNotExist(err) {
+		return nil
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if err := os.RemoveAll(filepath.Join(root, entry.Name())); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func normalizeScopes(scopes []string) ([]string, error) {
+	if len(scopes) == 0 {
+		return []string{"all"}, nil
+	}
+	seen := map[string]bool{}
+	out := make([]string, 0, len(scopes))
+	for _, scope := range scopes {
+		s := strings.ToLower(strings.TrimSpace(scope))
+		if s == "" {
+			continue
+		}
+		if !allowedPurgeScopes[s] {
+			return nil, fmt.Errorf("unsupported scope: %s", s)
+		}
+		if !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	if len(out) == 0 {
+		out = []string{"all"}
+	}
+	return out, nil
+}
+
+func restartProjectService(slug string) {
+	if strings.TrimSpace(slug) == "" {
+		return
+	}
+	_ = exec.Command("sudo", "systemctl", "restart", "forge-"+slug).Run()
+}
+
+func loadProjectConfig(slug string) (projectConfig, error) {
+	cfgPath := filepath.Join("/opt/forge/projects", slug, "forge.json")
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		return projectConfig{}, err
+	}
+	var cfg projectConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return projectConfig{}, err
+	}
+	return cfg, nil
+}
+
+func purgeProjectScopes(slug string, cfg projectConfig, scopes []string) ([]string, error) {
+	dataDir := projectDataDir(slug, cfg)
+	expanded := scopes
+	if len(scopes) == 1 && scopes[0] == "all" {
+		expanded = []string{"auth", "database", "storage", "hosting", "analytics", "functions", "realtime"}
+	}
+
+	performed := make([]string, 0, len(expanded))
+	for _, scope := range expanded {
+		switch scope {
+		case "auth":
+			if err := wipeDirContents(filepath.Join(dataDir, "auth", "users")); err != nil {
+				return performed, err
+			}
+			if err := wipeDirContents(filepath.Join(dataDir, "auth", "tokens")); err != nil {
+				return performed, err
+			}
+		case "database":
+			if err := wipeDirContents(filepath.Join(dataDir, "database")); err != nil {
+				return performed, err
+			}
+		case "storage":
+			if err := wipeDirContents(filepath.Join(dataDir, "storage", "objects")); err != nil {
+				return performed, err
+			}
+			if err := wipeDirContents(filepath.Join(dataDir, "storage", "uploads")); err != nil {
+				return performed, err
+			}
+		case "hosting":
+			if err := wipeDirContents(filepath.Join(dataDir, "hosting", "projects")); err != nil {
+				return performed, err
+			}
+		case "analytics":
+			if err := wipeDirContents(filepath.Join(dataDir, "analytics")); err != nil {
+				return performed, err
+			}
+		case "functions":
+			if err := wipeDirContents(filepath.Join(dataDir, "functions")); err != nil {
+				return performed, err
+			}
+		case "realtime":
+			if err := wipeDirContents(filepath.Join(dataDir, "realtime")); err != nil {
+				return performed, err
+			}
+		default:
+			return performed, fmt.Errorf("unsupported scope: %s", scope)
+		}
+		performed = append(performed, scope)
+	}
+	restartProjectService(slug)
+	return performed, nil
+}
+
+func handlePurgeProject(ctx *server.Context) {
+	slug := strings.TrimSpace(ctx.Param("slug"))
+	if slug == "" {
+		ctx.Error(400, "Missing project slug")
+		return
+	}
+
+	if slug == "forge" || slug == "admin" || slug == "dashboard" {
+		ctx.Error(403, "Protected system slug cannot be purged")
+		return
+	}
+
+	cfg, err := loadProjectConfig(slug)
+	if err != nil {
+		ctx.Error(404, "Project configuration not found")
+		return
+	}
+
+	var req purgeRequest
+	if err := ctx.BindJSON(&req); err != nil {
+		ctx.Error(400, "Invalid purge request")
+		return
+	}
+	if strings.TrimSpace(req.Confirm) != "DESTROY" {
+		ctx.Error(400, "Confirmation failed; send confirm=DESTROY")
+		return
+	}
+
+	scopes, err := normalizeScopes(req.Scopes)
+	if err != nil {
+		ctx.Error(400, err.Error())
+		return
+	}
+	performed, err := purgeProjectScopes(slug, cfg, scopes)
+	if err != nil {
+		ctx.Error(500, fmt.Sprintf("Purge failed: %v", err))
+		return
+	}
+	ctx.JSON(200, map[string]any{
+		"status":           "purged",
+		"slug":             slug,
+		"performed_scopes": performed,
+	})
+}
+
+func currentProjectSlugFromCWD() (string, error) {
+	wd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	clean := filepath.Clean(wd)
+	needle := filepath.Clean("/opt/forge/projects")
+	if !strings.HasPrefix(clean, needle+string(os.PathSeparator)) {
+		return "", fmt.Errorf("instance is not running from a project directory")
+	}
+	rest := strings.TrimPrefix(clean, needle+string(os.PathSeparator))
+	parts := strings.Split(rest, string(os.PathSeparator))
+	if len(parts) == 0 || strings.TrimSpace(parts[0]) == "" {
+		return "", fmt.Errorf("unable to infer project slug from working directory")
+	}
+	return parts[0], nil
+}
+
+func handlePurgeCurrentProject(ctx *server.Context) {
+	slug, err := currentProjectSlugFromCWD()
+	if err != nil {
+		ctx.Error(400, err.Error())
+		return
+	}
+	cfg, err := loadProjectConfig(slug)
+	if err != nil {
+		ctx.Error(404, "Project configuration not found")
+		return
+	}
+	var req purgeRequest
+	if err := ctx.BindJSON(&req); err != nil {
+		ctx.Error(400, "Invalid purge request")
+		return
+	}
+	if strings.TrimSpace(req.Confirm) != "DESTROY" {
+		ctx.Error(400, "Confirmation failed; send confirm=DESTROY")
+		return
+	}
+	scopes, err := normalizeScopes(req.Scopes)
+	if err != nil {
+		ctx.Error(400, err.Error())
+		return
+	}
+	performed, err := purgeProjectScopes(slug, cfg, scopes)
+	if err != nil {
+		ctx.Error(500, fmt.Sprintf("Purge failed: %v", err))
+		return
+	}
+	ctx.JSON(200, map[string]any{
+		"status":           "purged",
+		"slug":             slug,
+		"performed_scopes": performed,
+	})
+}
+
+func fetchJSON(url string, out any) error {
+	client := &http.Client{Timeout: 2 * time.Second}
+	res, err := client.Get(url)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	if res.StatusCode >= 400 {
+		return fmt.Errorf("http %d", res.StatusCode)
+	}
+	return json.NewDecoder(res.Body).Decode(out)
+}
+
+func countAuthUsers(dataDir string) (total int, signupsToday int, activeSessions int) {
+	usersDir := filepath.Join(dataDir, "auth", "users")
+	entries, err := os.ReadDir(usersDir)
+	if err == nil {
+		now := time.Now()
+		startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).Unix()
+		for _, entry := range entries {
+			if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+				continue
+			}
+			total++
+			data, readErr := os.ReadFile(filepath.Join(usersDir, entry.Name()))
+			if readErr != nil {
+				continue
+			}
+			var user struct {
+				CreatedAt int64 `json:"created_at"`
+			}
+			if json.Unmarshal(data, &user) == nil && user.CreatedAt >= startOfDay {
+				signupsToday++
+			}
+		}
+	}
+
+	tokensDir := filepath.Join(dataDir, "auth", "tokens")
+	tokens, err := os.ReadDir(tokensDir)
+	if err == nil {
+		nowUnix := time.Now().Unix()
+		for _, entry := range tokens {
+			if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+				continue
+			}
+			data, readErr := os.ReadFile(filepath.Join(tokensDir, entry.Name()))
+			if readErr != nil {
+				continue
+			}
+			var token struct {
+				ExpiresAt int64 `json:"expires_at"`
+			}
+			if json.Unmarshal(data, &token) == nil && token.ExpiresAt > nowUnix {
+				activeSessions++
+			}
+		}
+	}
+	return
+}
+
+func dirFileStats(root string) (count int, size int64) {
+	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d == nil || d.IsDir() {
+			return nil
+		}
+		info, statErr := d.Info()
+		if statErr != nil {
+			return nil
+		}
+		count++
+		size += info.Size()
+		return nil
+	})
+	return
+}
+
+func summarizeProject(name, slug string, cfg projectConfig) projectSummary {
+	sum := projectSummary{
+		Name:     name,
+		Slug:     slug,
+		Port:     cfg.Server.Port,
+		Health:   "offline",
+		Services: map[string]map[string]any{},
+	}
+
+	sum.Services["auth"] = map[string]any{"enabled": cfg.Auth.Enabled, "users": 0, "signups_today": 0, "active_sessions": 0}
+	sum.Services["database"] = map[string]any{"enabled": cfg.Database.Enabled, "collections": 0, "documents": 0}
+	sum.Services["storage"] = map[string]any{"enabled": cfg.Storage.Enabled, "files": 0, "bytes": int64(0)}
+	sum.Services["hosting"] = map[string]any{"enabled": cfg.Hosting.Enabled, "sites": 0}
+	sum.Services["analytics"] = map[string]any{"enabled": cfg.Analytics.Enabled, "buffer_used": 0, "buffer_capacity": 0}
+	sum.Services["functions"] = map[string]any{"enabled": cfg.Functions.Enabled}
+	sum.Services["realtime"] = map[string]any{"enabled": cfg.Realtime.Enabled}
+
+	baseURL := fmt.Sprintf("http://127.0.0.1:%d", cfg.Server.Port)
+	var healthResp struct {
+		Status   string            `json:"status"`
+		Services map[string]string `json:"services"`
+	}
+	if err := fetchJSON(baseURL+"/health", &healthResp); err == nil {
+		if strings.EqualFold(healthResp.Status, "ok") {
+			sum.Health = "online"
+		}
+	}
+
+	if cfg.Database.Enabled {
+		var dbResp struct {
+			Collections []struct {
+				Count int `json:"count"`
+			} `json:"collections"`
+		}
+		if err := fetchJSON(baseURL+"/db/collections", &dbResp); err == nil {
+			totalDocs := 0
+			for _, c := range dbResp.Collections {
+				totalDocs += c.Count
+			}
+			sum.Services["database"]["collections"] = len(dbResp.Collections)
+			sum.Services["database"]["documents"] = totalDocs
+		}
+	}
+
+	if cfg.Storage.Enabled {
+		var storageResp struct {
+			TotalFiles int   `json:"total_files"`
+			TotalSize  int64 `json:"total_size"`
+		}
+		if err := fetchJSON(baseURL+"/storage/stats", &storageResp); err == nil {
+			sum.Services["storage"]["files"] = storageResp.TotalFiles
+			sum.Services["storage"]["bytes"] = storageResp.TotalSize
+		}
+	}
+
+	if cfg.Hosting.Enabled {
+		var hostingResp struct {
+			TotalSites int `json:"total_sites"`
+		}
+		if err := fetchJSON(baseURL+"/hosting/stats", &hostingResp); err == nil {
+			sum.Services["hosting"]["sites"] = hostingResp.TotalSites
+		}
+	}
+
+	if cfg.Analytics.Enabled {
+		var analyticsResp struct {
+			Buffer struct {
+				Used     int `json:"used"`
+				Capacity int `json:"capacity"`
+			} `json:"buffer"`
+		}
+		if err := fetchJSON(baseURL+"/analytics/stats", &analyticsResp); err == nil {
+			sum.Services["analytics"]["buffer_used"] = analyticsResp.Buffer.Used
+			sum.Services["analytics"]["buffer_capacity"] = analyticsResp.Buffer.Capacity
+		}
+	}
+
+	dataDir := projectDataDir(slug, cfg)
+	if cfg.Auth.Enabled {
+		users, today, sessions := countAuthUsers(dataDir)
+		sum.Services["auth"]["users"] = users
+		sum.Services["auth"]["signups_today"] = today
+		sum.Services["auth"]["active_sessions"] = sessions
+	}
+	if cfg.Storage.Enabled {
+		count, size := dirFileStats(filepath.Join(dataDir, "storage", "objects"))
+		if files, ok := sum.Services["storage"]["files"].(int); ok && files == 0 {
+			sum.Services["storage"]["files"] = count
+		}
+		if bytes, ok := sum.Services["storage"]["bytes"].(int64); ok && bytes == 0 {
+			sum.Services["storage"]["bytes"] = size
+		}
+	}
+	return sum
 }
 
 var nonAlphanumericRegex = regexp.MustCompile(`[^a-z0-9]+`)
@@ -258,7 +700,7 @@ func handleDeleteProject(ctx *server.Context) {
 // handleGetProjects handles GET /admin/projects
 func handleGetProjects(ctx *server.Context) {
 	projectsDir := "/opt/forge/projects"
-	
+
 	// Ensure the directory exists
 	if _, err := os.Stat(projectsDir); os.IsNotExist(err) {
 		ctx.JSON(200, []ProjectInfo{})
@@ -278,9 +720,9 @@ func handleGetProjects(ctx *server.Context) {
 		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
 			continue
 		}
-		
+
 		configPath := filepath.Join(projectsDir, entry.Name(), "forge.json")
-		
+
 		// If file is missing (being deleted), just skip this project
 		if _, err := os.Stat(configPath); os.IsNotExist(err) {
 			continue
@@ -290,7 +732,7 @@ func handleGetProjects(ctx *server.Context) {
 		if err != nil {
 			continue
 		}
-		
+
 		var cfg struct {
 			Server struct {
 				Port int `json:"port"`
@@ -308,6 +750,53 @@ func handleGetProjects(ctx *server.Context) {
 	}
 
 	ctx.JSON(200, projects)
+}
+
+// handleGetProjectSummaries handles GET /admin/projects/summary
+func handleGetProjectSummaries(ctx *server.Context) {
+	projectsDir := "/opt/forge/projects"
+	if _, err := os.Stat(projectsDir); os.IsNotExist(err) {
+		ctx.JSON(200, map[string]any{"projects": []projectSummary{}, "totals": map[string]any{"projects": 0, "online": 0, "offline": 0}})
+		return
+	}
+
+	entries, err := os.ReadDir(projectsDir)
+	if err != nil {
+		ctx.Error(500, "Failed to read projects")
+		return
+	}
+
+	summaries := make([]projectSummary, 0)
+	online := 0
+	for _, entry := range entries {
+		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+		slug := entry.Name()
+		configPath := filepath.Join(projectsDir, slug, "forge.json")
+		data, readErr := os.ReadFile(configPath)
+		if readErr != nil {
+			continue
+		}
+		var cfg projectConfig
+		if json.Unmarshal(data, &cfg) != nil || cfg.Server.Port == 0 {
+			continue
+		}
+		sum := summarizeProject(slug, slug, cfg)
+		if sum.Health == "online" {
+			online++
+		}
+		summaries = append(summaries, sum)
+	}
+
+	ctx.JSON(200, map[string]any{
+		"projects": summaries,
+		"totals": map[string]any{
+			"projects": len(summaries),
+			"online":   online,
+			"offline":  len(summaries) - online,
+		},
+	})
 }
 
 // handleGetProjectConfig handles GET /admin/projects/:slug/config

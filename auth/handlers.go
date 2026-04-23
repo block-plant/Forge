@@ -14,6 +14,7 @@ func RegisterRoutes(router *server.Router, svc *Service) {
 	auth.POST("/signin", handleSignin(svc))
 	auth.POST("/refresh", handleRefresh(svc))
 	auth.POST("/verify-email", handleVerifyEmail(svc))
+	auth.POST("/verify-otp", handleVerifyEmail(svc)) // Alias for frontend compatibility
 	auth.POST("/forgot-password", handleForgotPassword(svc))
 	auth.POST("/reset-password", handleResetPassword(svc))
 
@@ -104,6 +105,8 @@ func handleSignin(svc *Service) server.HandlerFunc {
 				ctx.Error(401, "Invalid email or password")
 			case ErrUserDisabled:
 				ctx.Error(403, "Account is disabled")
+			case ErrUserNotVerified:
+				ctx.Error(403, "Email address not verified")
 			default:
 				ctx.Error(401, "Authentication failed")
 			}
@@ -117,8 +120,13 @@ func handleSignin(svc *Service) server.HandlerFunc {
 		}
 
 		ctx.JSON(200, map[string]interface{}{
-			"user":   user.ToPublic(),
-			"tokens": tokens,
+			"user": user.ToPublic(),
+			"tokens": map[string]interface{}{
+				"token":         tokens.AccessToken,
+				"access_token":  tokens.AccessToken,
+				"refresh_token": tokens.RefreshToken,
+				"expires_in":    tokens.ExpiresIn,
+			},
 		})
 	}
 }
@@ -273,9 +281,16 @@ func handleChangePassword(svc *Service) server.HandlerFunc {
 func handleAdminListUsers(svc *Service) server.HandlerFunc {
 	return func(ctx *server.Context) {
 		users := svc.ListUsers()
+		sessionsByUser := make(map[string]int, len(users))
+		for _, user := range users {
+			sessionsByUser[user.UID] = svc.CountActiveSessionsForUser(user.UID)
+		}
 		ctx.JSON(200, map[string]interface{}{
-			"users": users,
-			"total": len(users),
+			"users":                  users,
+			"total":                  len(users),
+			"signups_today":          svc.CountSignupsToday(),
+			"active_sessions":        svc.CountActiveSessions(),
+			"active_sessions_by_uid": sessionsByUser,
 		})
 	}
 }
@@ -342,6 +357,7 @@ func handleVerifyEmail(svc *Service) server.HandlerFunc {
 		var req struct {
 			Email string `json:"email"`
 			Code  string `json:"code"`
+			Type  string `json:"type"`
 		}
 		if err := ctx.BindJSON(&req); err != nil {
 			ctx.Error(400, "Invalid request body")

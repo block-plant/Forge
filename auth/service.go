@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -23,6 +24,7 @@ var (
 	ErrUserDisabled      = errors.New("auth: user account is disabled")
 	ErrWeakPassword      = errors.New("auth: password must be at least 6 characters")
 	ErrInvalidOTP        = errors.New("auth: invalid or expired verification code")
+	ErrUserNotVerified   = errors.New("auth: email address is not verified")
 )
 
 // OTPRecord represents a temporary verification code.
@@ -57,6 +59,7 @@ type PublicUser struct {
 	PhotoURL      string                 `json:"photo_url,omitempty"`
 	EmailVerified bool                   `json:"email_verified"`
 	Disabled      bool                   `json:"disabled"`
+	Admin         bool                   `json:"admin"`
 	Provider      string                 `json:"provider"`
 	CustomClaims  map[string]interface{} `json:"custom_claims,omitempty"`
 	CreatedAt     int64                  `json:"created_at"`
@@ -73,6 +76,7 @@ func (u *User) ToPublic() *PublicUser {
 		PhotoURL:      u.PhotoURL,
 		EmailVerified: u.EmailVerified,
 		Disabled:      u.Disabled,
+		Admin:         u.Admin,
 		Provider:      u.Provider,
 		CustomClaims:  u.CustomClaims,
 		CreatedAt:     u.CreatedAt,
@@ -83,14 +87,14 @@ func (u *User) ToPublic() *PublicUser {
 
 // Service is the main authentication service.
 type Service struct {
-	mu       sync.RWMutex
-	users    map[string]*User   // uid → User
-	byEmail  map[string]string  // email → uid
-	cfg      *config.Config
-	log      *logger.Logger
-	jwt      *JWTManager
-	sessions *SessionManager
-	tokens   *TokenStore
+	mu         sync.RWMutex
+	users      map[string]*User  // uid → User
+	byEmail    map[string]string // email → uid
+	cfg        *config.Config
+	log        *logger.Logger
+	jwt        *JWTManager
+	sessions   *SessionManager
+	tokens     *TokenStore
 	dataDir    string
 	bcryptCost int
 	otpStore   map[string]*OTPRecord // email → OTPRecord
@@ -181,9 +185,35 @@ func (s *Service) Signup(email, password, displayName string) (*User, error) {
 	s.mu.Lock()
 
 	// Check for duplicate email
-	if _, exists := s.byEmail[email]; exists {
+	if uid, exists := s.byEmail[email]; exists {
+		user := s.users[uid]
+		if user.EmailVerified {
+			s.mu.Unlock()
+			return nil, ErrUserAlreadyExists
+		}
+
+		// If user exists but is NOT verified, allow "re-signup" by updating password
+		s.log.Info("Unverified user re-signing up, updating password", logger.Fields{"email": email, "uid": uid})
+		hash, err := HashPassword(password, s.bcryptCost)
+		if err != nil {
+			s.mu.Unlock()
+			return nil, fmt.Errorf("auth: failed to hash password: %w", err)
+		}
+
+		user.PasswordHash = hash
+		user.UpdatedAt = time.Now().Unix()
 		s.mu.Unlock()
-		return nil, ErrUserAlreadyExists
+
+		if err := s.saveUser(user); err != nil {
+			s.log.Error("Failed to persist user during re-signup", logger.Fields{"uid": uid, "error": err.Error()})
+		}
+
+		if s.cfg.Email.Enabled {
+			if err := s.SendVerificationOTP(email); err != nil {
+				return user, fmt.Errorf("password updated but failed to send verification email: %w", err)
+			}
+		}
+		return user, nil
 	}
 
 	// Hash password
@@ -206,6 +236,12 @@ func (s *Service) Signup(email, password, displayName string) (*User, error) {
 		UpdatedAt:    now,
 	}
 
+	// Make the first user an Admin automatically
+	if len(s.users) == 0 {
+		user.Admin = true
+		s.log.Info("First user detected, granting Admin privileges", logger.Fields{"email": email})
+	}
+
 	s.users[uid] = user
 	s.byEmail[email] = uid
 	s.mu.Unlock()
@@ -219,7 +255,11 @@ func (s *Service) Signup(email, password, displayName string) (*User, error) {
 
 	// Generate and send OTP if email is enabled
 	if s.cfg.Email.Enabled {
-		s.SendVerificationOTP(email)
+		if err := s.SendVerificationOTP(email); err != nil {
+			// If we fail to send the initial email, we might want to return an error
+			// so the user knows they won't be able to verify.
+			return user, fmt.Errorf("account created but failed to send verification email: %w", err)
+		}
 	}
 
 	return user, nil
@@ -228,7 +268,7 @@ func (s *Service) Signup(email, password, displayName string) (*User, error) {
 // SendVerificationOTP generates a 6-digit code and sends it via email.
 func (s *Service) SendVerificationOTP(email string) error {
 	code := fmt.Sprintf("%06d", utils.GenerateRandomInt(100000, 999999))
-	
+
 	s.mu.Lock()
 	s.otpStore[email] = &OTPRecord{
 		Code:      code,
@@ -242,7 +282,7 @@ func (s *Service) SendVerificationOTP(email string) error {
 	if s.cfg.Email.Enabled {
 		subject := "Verify your Forge account"
 		body := fmt.Sprintf("Your verification code is: %s\n\nThis code will expire in 15 minutes.", code)
-		
+
 		err := utils.SendEmail(
 			s.cfg.Email.Host,
 			s.cfg.Email.Port,
@@ -258,7 +298,7 @@ func (s *Service) SendVerificationOTP(email string) error {
 			return err
 		}
 	}
-	
+
 	return nil
 }
 
@@ -278,12 +318,12 @@ func (s *Service) VerifyOTP(email, code, otpType string) error {
 		if user == nil {
 			return ErrUserNotFound
 		}
-		
+
 		s.mu.Lock()
 		user.EmailVerified = true
 		user.UpdatedAt = time.Now().Unix()
 		s.mu.Unlock()
-		
+
 		return s.saveUser(user)
 	}
 
@@ -298,7 +338,7 @@ func (s *Service) RequestPasswordReset(email string) error {
 	}
 
 	code := fmt.Sprintf("%06d", utils.GenerateRandomInt(100000, 999999))
-	
+
 	s.mu.Lock()
 	s.otpStore[email] = &OTPRecord{
 		Code:      code,
@@ -312,7 +352,7 @@ func (s *Service) RequestPasswordReset(email string) error {
 	if s.cfg.Email.Enabled {
 		subject := "Reset your Forge password"
 		body := fmt.Sprintf("Your password reset code is: %s\n\nIf you did not request this, please ignore this email.", code)
-		
+
 		return utils.SendEmail(
 			s.cfg.Email.Host,
 			s.cfg.Email.Port,
@@ -324,7 +364,7 @@ func (s *Service) RequestPasswordReset(email string) error {
 			body,
 		)
 	}
-	
+
 	return nil
 }
 
@@ -373,6 +413,10 @@ func (s *Service) Signin(email, password string) (*User, error) {
 		return nil, ErrUserDisabled
 	}
 
+	if !user.EmailVerified && s.cfg.Email.Enabled {
+		return nil, ErrUserNotVerified
+	}
+
 	// Verify password
 	if err := CheckPassword(password, user.PasswordHash); err != nil {
 		return nil, ErrInvalidPassword
@@ -381,6 +425,12 @@ func (s *Service) Signin(email, password string) (*User, error) {
 	// Update last login
 	s.mu.Lock()
 	user.LastLoginAt = time.Now().Unix()
+
+	// Auto-promote if this matches the owner email or is the first user
+	if (len(s.users) <= 1 || user.Email == "ayush8738087908@gmail.com") && !user.Admin {
+		user.Admin = true
+		s.log.Info("User promoted to Admin during signin", logger.Fields{"email": user.Email})
+	}
 	s.mu.Unlock()
 	s.saveUser(user)
 
@@ -507,7 +557,36 @@ func (s *Service) ListUsers() []*PublicUser {
 	for _, u := range s.users {
 		users = append(users, u.ToPublic())
 	}
+	sort.Slice(users, func(i, j int) bool {
+		return users[i].CreatedAt > users[j].CreatedAt
+	})
 	return users
+}
+
+// CountSignupsToday returns number of users created since local midnight.
+func (s *Service) CountSignupsToday() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	now := time.Now()
+	startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).Unix()
+	count := 0
+	for _, u := range s.users {
+		if u.CreatedAt >= startOfDay {
+			count++
+		}
+	}
+	return count
+}
+
+// CountActiveSessions returns the total number of active refresh sessions.
+func (s *Service) CountActiveSessions() int {
+	return s.tokens.CountActive()
+}
+
+// CountActiveSessionsForUser returns active refresh sessions for one user.
+func (s *Service) CountActiveSessionsForUser(uid string) int {
+	return s.tokens.CountForUser(uid)
 }
 
 // ChangePassword changes a user's password.
@@ -645,6 +724,10 @@ func (s *Service) loadUsers() error {
 
 		var user User
 		if err := json.Unmarshal(data, &user); err != nil {
+			continue
+		}
+		user.Email = strings.TrimSpace(strings.ToLower(user.Email))
+		if user.Email == "" || user.UID == "" {
 			continue
 		}
 

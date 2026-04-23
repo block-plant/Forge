@@ -11,6 +11,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -159,6 +160,10 @@ func TestForgeLoad(t *testing.T) {
 	dur := *duration
 	rpsTarget := *rps
 
+	if err := waitForHealth(base+"/health", 2*time.Second); err != nil {
+		t.Skipf("Skipping load test: endpoint %s unavailable: %v", base, err)
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), dur+5*time.Second)
 	defer cancel()
 
@@ -270,3 +275,29 @@ func summary(name string, total, errors int64, p50, p95, p99 time.Duration) stri
 }
 
 var _ = summary // suppress unused warning
+
+func waitForHealth(healthURL string, timeout time.Duration) error {
+	client := &http.Client{Timeout: timeout}
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+
+	for time.Now().Before(deadline) {
+		resp, err := client.Get(healthURL)
+		if err == nil {
+			io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+			if resp.StatusCode < 500 {
+				return nil
+			}
+			lastErr = fmt.Errorf("health returned status %d", resp.StatusCode)
+		} else {
+			lastErr = err
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+
+	if lastErr == nil {
+		lastErr = errors.New("health endpoint check timed out")
+	}
+	return lastErr
+}

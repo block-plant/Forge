@@ -44,7 +44,7 @@ func RegisterRoutes(router *server.Router) error {
 		ctx.Response.SetBody(data)
 	})
 
-	// The router strips trailing slashes in splitPath, so BOTH /dashboard and /dashboard/ 
+	// The router strips trailing slashes in splitPath, so BOTH /dashboard and /dashboard/
 	// match this route. We will serve index.html directly from this route.
 	router.GET("/dashboard", func(ctx *server.Context) {
 		data, err := fs.ReadFile(staticFS, "index.html")
@@ -59,8 +59,11 @@ func RegisterRoutes(router *server.Router) error {
 
 	// Admin APIs for Project Management
 	router.GET("/admin/projects", handleGetProjects)
+	router.GET("/admin/projects/summary", handleGetProjectSummaries)
 	router.POST("/admin/projects", handleCreateProject)
 	router.DELETE("/admin/projects/:slug", handleDeleteProject)
+	router.POST("/admin/projects/:slug/purge", handlePurgeProject)
+	router.POST("/admin/self/purge", handlePurgeCurrentProject)
 	router.GET("/admin/projects/:slug/config", handleGetProjectConfig)
 	router.PUT("/admin/projects/:slug/config", handleUpdateProjectConfig)
 

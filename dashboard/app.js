@@ -46,6 +46,117 @@ document.addEventListener('DOMContentLoaded', () => {
   const PORT_MIN = 8081;
   const PORT_MAX = 8100;
 
+  function getForgeToken() {
+    return localStorage.getItem('forge_token') || localStorage.getItem('token') || localStorage.getItem('auth_token') || '';
+  }
+
+  function setForgeToken(token) {
+    if (!token) return;
+    localStorage.setItem('forge_token', token);
+    localStorage.setItem('token', token);
+    localStorage.setItem('auth_token', token);
+  }
+
+  function renderAuthSigninPrompt(message) {
+    var info = message || 'Sign in to view authentication data.';
+    var html =
+      '<div class="empty-state" style="max-width:520px;margin:0 auto">' +
+        '<div class="empty-icon">🔐</div>' +
+        '<h3>Authentication Required</h3>' +
+        '<p>' + escapeHtml(info) + '</p>' +
+        '<div style="margin-top:0.85rem;text-align:left;display:flex;flex-direction:column;gap:0.55rem">' +
+          '<input id="auth-signin-email" class="modal-input" type="email" placeholder="you@email.com" style="width:100%">' +
+          '<input id="auth-signin-password" class="modal-input" type="password" placeholder="password" style="width:100%">' +
+          '<button id="auth-signin-btn" class="primary-btn" style="width:100%">Sign In</button>' +
+        '</div>' +
+      '</div>';
+    document.getElementById('auth-users-list').innerHTML = html;
+
+    var btn = document.getElementById('auth-signin-btn');
+    if (btn) {
+      btn.addEventListener('click', async function() {
+        var emailEl = document.getElementById('auth-signin-email');
+        var passEl = document.getElementById('auth-signin-password');
+        var email = emailEl ? String(emailEl.value || '').trim() : '';
+        var password = passEl ? String(passEl.value || '') : '';
+        if (!email || !password) {
+          showToast('Email and password are required', 'error');
+          return;
+        }
+        btn.disabled = true;
+        btn.textContent = 'Signing In...';
+        try {
+          var signinRes = await fetch(API + '/auth/signin', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: email, password: password }),
+          });
+          var signinData = await signinRes.json().catch(function() { return {}; });
+          if (!signinRes.ok) {
+            throw new Error(signinData.message || ('Sign in failed (' + signinRes.status + ')'));
+          }
+          var token = (signinData.tokens && (signinData.tokens.access_token || signinData.tokens.token)) || '';
+          if (!token) throw new Error('No access token returned');
+          setForgeToken(token);
+          showToast('Signed in successfully', 'success');
+          fetchAuthData();
+        } catch (err) {
+          showToast('Sign in failed: ' + (err && err.message ? err.message : 'Unknown error'), 'error');
+          btn.disabled = false;
+          btn.textContent = 'Sign In';
+        }
+      });
+    }
+  }
+
+  async function apiFetch(url, options) {
+    options = options || {};
+    var headers = new Headers(options.headers || {});
+    var token = getForgeToken();
+    if (token) headers.set('Authorization', 'Bearer ' + token);
+    return fetch(url, Object.assign({}, options, { headers: headers }));
+  }
+
+  function projectApiBase(port) {
+    return window.location.protocol + '//' + HOSTNAME + ':' + String(port || '').trim();
+  }
+
+  async function requestProjectPurge(endpoint, scopes) {
+    var scopeList = Array.isArray(scopes) ? scopes : [scopes];
+    var confirmed = window.prompt('Type DESTROY to confirm this destructive action:');
+    if (confirmed !== 'DESTROY') {
+      showToast('Cancelled. Confirmation did not match DESTROY.', 'info');
+      return false;
+    }
+    var res = await apiFetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirm: 'DESTROY', scopes: scopeList }),
+    });
+    var text = await res.text();
+    if (!res.ok) {
+      throw new Error(text || ('Purge failed (' + res.status + ')'));
+    }
+    return true;
+  }
+
+  var adminSummaryCache = null;
+  var adminSummaryCacheAt = 0;
+
+  async function fetchAdminSummary(force) {
+    if (!IS_ADMIN) return null;
+    var now = Date.now();
+    if (!force && adminSummaryCache && (now - adminSummaryCacheAt) < 5000) {
+      return adminSummaryCache;
+    }
+    var res = await apiFetch(API + '/admin/projects/summary');
+    if (!res.ok) throw new Error(await res.text());
+    var data = await res.json();
+    adminSummaryCache = data;
+    adminSummaryCacheAt = now;
+    return data;
+  }
+
   // Apply mode class
   if (IS_ADMIN) {
     document.body.classList.add('is-admin');
@@ -304,13 +415,11 @@ document.addEventListener('DOMContentLoaded', () => {
     logActivity('GET', '/admin/projects' + (retryCount > 0 ? ' (Retry ' + retryCount + ')' : ''));
 
     try {
-      var res = await fetch(API + '/admin/projects');
-      if (!res.ok) throw new Error(await res.text());
-      var projects = await res.json();
-      projects = projects || [];
-
-      document.getElementById('projects-active-count').textContent = projects.length;
-      document.getElementById('projects-health-status').textContent = projects.length > 0 ? 'Yes ✓' : '—';
+      var summary = await fetchAdminSummary(retryCount > 0);
+      var projects = (summary && summary.projects) || [];
+      var totals = (summary && summary.totals) || {};
+      document.getElementById('projects-active-count').textContent = String(totals.projects ?? projects.length);
+      document.getElementById('projects-health-status').textContent = (totals.offline || 0) === 0 ? 'Yes ✓' : 'No';
 
       grid.innerHTML = '';
       if (projects.length === 0) {
@@ -328,12 +437,12 @@ document.addEventListener('DOMContentLoaded', () => {
           card.innerHTML =
             '<div class="project-card-header">' +
               '<div class="project-card-title">' + escapeHtml(p.name) + '</div>' +
-              '<div class="project-status-dot online"></div>' +
+              '<div class="project-status-dot ' + (p.health === 'online' ? 'online' : '') + '"></div>' +
             '</div>' +
             '<div class="project-card-meta">' +
               '<div class="project-meta-row"><span class="meta-label">Port</span><span class="meta-value">' + p.port + '</span></div>' +
               '<div class="project-meta-row"><span class="meta-label">Slug</span><span class="meta-value">' + escapeHtml(p.slug) + '</span></div>' +
-              '<div class="project-meta-row"><span class="meta-label">ID</span><span class="meta-value">' + escapeHtml(p.slug) + '</span></div>' +
+              '<div class="project-meta-row"><span class="meta-label">Health</span><span class="meta-value">' + escapeHtml((p.health || 'unknown').toUpperCase()) + '</span></div>' +
             '</div>' +
             '<div class="project-card-footer">' +
               '<div class="project-card-footer-buttons">' +
@@ -412,7 +521,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('settings-smtp-from').value = '';
 
     try {
-      var res = await fetch(API + '/admin/projects/' + slug + '/config');
+      var res = await apiFetch(API + '/admin/projects/' + slug + '/config');
       if (!res.ok) throw new Error('Failed to load config');
       currentConfig = await res.json();
 
@@ -428,6 +537,11 @@ document.addEventListener('DOMContentLoaded', () => {
     // Sync visual toggle pills
     syncTogglePill('settings-email-enabled', 'email-toggle-pill');
     syncTogglePill('settings-hosting-spa', 'spa-toggle-pill');
+
+    // Show warning if SMTP is incomplete
+    if (currentConfig.email && currentConfig.email.enabled && !currentConfig.email.host) {
+      showToast('Warning: Email is enabled but SMTP host is not configured!', 'info');
+    }
 
     // Populate Database
     if (currentConfig.database) {
@@ -555,7 +669,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     try {
-      var res = await fetch(API + '/admin/projects/' + currentSettingsSlug + '/config', {
+      var res = await apiFetch(API + '/admin/projects/' + currentSettingsSlug + '/config', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(currentConfig)
@@ -636,7 +750,7 @@ document.addEventListener('DOMContentLoaded', () => {
       confirmDeployBtn.textContent = 'Deploying...';
       confirmDeployBtn.disabled = true;
       try {
-        var res = await fetch(API + '/admin/projects', {
+        var res = await apiFetch(API + '/admin/projects', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ name: name, ...services })
@@ -673,7 +787,7 @@ document.addEventListener('DOMContentLoaded', () => {
       confirmDeleteBtn.textContent = 'Destroying...';
       confirmDeleteBtn.disabled = true;
       try {
-        var res = await fetch(API + '/admin/projects/' + encodeURIComponent(currentDeletePort), { method: 'DELETE' });
+        var res = await apiFetch(API + '/admin/projects/' + encodeURIComponent(currentDeletePort), { method: 'DELETE' });
         var body = await res.text();
         if (!res.ok) throw new Error(body);
         showToast('Instance on port ' + currentDeletePort + ' terminated.', 'success');
@@ -708,7 +822,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   async function fetchHealth() {
     try {
-      var res = await fetch(API + '/health');
+      var res = await apiFetch(API + '/health');
       var data = await res.json();
 
       document.getElementById('server-status').textContent = 'Online';
@@ -745,7 +859,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   async function fetchAnalyticsStats() {
     try {
-      var res = await fetch(API + '/analytics/stats');
+      var res = await apiFetch(API + '/analytics/stats');
       if (!res.ok) return;
       var data = await res.json();
       var el = document.getElementById('analytics-buffer');
@@ -798,33 +912,196 @@ document.addEventListener('DOMContentLoaded', () => {
   // AUTH
   // ════════════════════════════════════
   async function fetchAuthData() {
+    function authActionBar(isAdminMode) {
+      var extra = isAdminMode
+        ? '<button id="auth-add-user-btn" class="primary-btn">Add User (Project)</button>' +
+          '<button id="auth-delete-user-btn" class="danger-btn">Delete User (Project)</button>'
+        : '<button id="auth-add-user-btn" class="primary-btn">Add User</button>';
+      return '<div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.75rem">' + extra + '</div>';
+    }
+
+    function bindAuthActions(isAdminMode) {
+      var addBtn = document.getElementById('auth-add-user-btn');
+      if (addBtn) {
+        addBtn.addEventListener('click', async function() {
+          var port = '';
+          if (isAdminMode) {
+            port = window.prompt('Project port for user creation (e.g. 8081):', '8081') || '';
+            if (!port) return;
+          }
+          var email = window.prompt('Email for new user:');
+          if (!email) return;
+          var password = window.prompt('Password for new user (min 8 chars):');
+          if (!password) return;
+          var displayName = window.prompt('Display name (optional):') || '';
+          var base = isAdminMode ? projectApiBase(port) : API;
+          try {
+            var res = await apiFetch(base + '/auth/signup', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ email: email.trim(), password: password, display_name: displayName }),
+            });
+            if (!res.ok) throw new Error(await res.text());
+            showToast('User added successfully', 'success');
+            fetchAuthData();
+          } catch (e) {
+            showToast('Add user failed: ' + (e && e.message ? e.message : 'Unknown error'), 'error');
+          }
+        });
+      }
+
+      var delBtn = document.getElementById('auth-delete-user-btn');
+      if (delBtn) {
+        delBtn.addEventListener('click', async function() {
+          var port = window.prompt('Project port for user deletion (e.g. 8081):', '8081') || '';
+          if (!port) return;
+          var uid = window.prompt('UID to delete:');
+          if (!uid) return;
+          var ok = window.confirm('Delete this user permanently?');
+          if (!ok) return;
+          try {
+            var base = projectApiBase(port);
+            var res = await apiFetch(base + '/auth/admin/users/' + encodeURIComponent(uid.trim()), { method: 'DELETE' });
+            if (!res.ok) throw new Error(await res.text());
+            showToast('User deleted successfully', 'success');
+            fetchAuthData();
+          } catch (e) {
+            showToast('Delete user failed: ' + (e && e.message ? e.message : 'Unknown error'), 'error');
+          }
+        });
+      }
+    }
+
+    if (IS_ADMIN) {
+      try {
+        var summary = await fetchAdminSummary(false);
+        var projects = (summary && summary.projects) || [];
+        var totalUsers = 0;
+        var signupsToday = 0;
+        var activeSessions = 0;
+        var html = '<table class="data-table"><thead><tr><th>Project</th><th>Port</th><th>Total Users</th><th>Signups Today</th><th>Active Sessions</th><th>Health</th></tr></thead><tbody>';
+        projects.forEach(function(p) {
+          var auth = (p.services && p.services.auth) || {};
+          if (auth.enabled) {
+            totalUsers += Number(auth.users || 0);
+            signupsToday += Number(auth.signups_today || 0);
+            activeSessions += Number(auth.active_sessions || 0);
+          }
+          html += '<tr>' +
+            '<td>' + escapeHtml(p.slug || p.name || '—') + '</td>' +
+            '<td class="mono">' + escapeHtml(String(p.port || '—')) + '</td>' +
+            '<td>' + (auth.enabled ? escapeHtml(String(auth.users || 0)) : '<span class="text-muted">Disabled</span>') + '</td>' +
+            '<td>' + (auth.enabled ? escapeHtml(String(auth.signups_today || 0)) : '<span class="text-muted">—</span>') + '</td>' +
+            '<td>' + (auth.enabled ? escapeHtml(String(auth.active_sessions || 0)) : '<span class="text-muted">—</span>') + '</td>' +
+            '<td>' + escapeHtml((p.health || 'unknown').toUpperCase()) + '</td>' +
+          '</tr>';
+        });
+        html += '</tbody></table>';
+        document.getElementById('auth-total-users').textContent = String(totalUsers);
+        document.getElementById('auth-signups-today').textContent = String(signupsToday);
+        document.getElementById('auth-sessions').textContent = String(activeSessions);
+        document.getElementById('auth-users-list').innerHTML = authActionBar(true) + (projects.length ? html : emptyState('📦', 'No Projects', 'No deployed projects available in admin registry.'));
+        bindAuthActions(true);
+        return;
+      } catch (e) {
+        document.getElementById('auth-users-list').innerHTML = emptyState('⚠️', 'Summary Error', 'Could not fetch project auth summaries.');
+        showToast('Failed to load admin auth summary', 'error');
+        return;
+      }
+    }
     logActivity('GET', '/auth/admin/users');
     try {
-      var res = await fetch(API + '/auth/admin/users');
+      var res = await apiFetch(API + '/auth/admin/users');
       if (!res.ok) {
-        document.getElementById('auth-users-list').innerHTML = emptyState('🔒', 'Auth Admin Required', 'The admin endpoint requires authorization.', 'curl -X POST ' + API + '/auth/signup \\\n  -H "Content-Type: application/json" \\\n  -d \'{"email":"you@mail.com","password":"secret"}\'');
+        // Fallback for non-admin users: show current user profile if available.
+        var meRes = await apiFetch(API + '/auth/me');
+        if (meRes.ok) {
+          var meData = await meRes.json();
+          var me = meData.user || {};
+          document.getElementById('auth-total-users').textContent = '1';
+          document.getElementById('auth-signups-today').textContent = '—';
+          document.getElementById('auth-sessions').textContent = '—';
+          document.getElementById('auth-users-list').innerHTML = authActionBar(false) +
+            '<table class="data-table"><thead><tr><th>Email</th><th>UID</th><th>Role</th></tr></thead><tbody>' +
+            '<tr><td>' + escapeHtml(me.email || '—') + '</td><td class="mono">' + escapeHtml((me.uid || '—').substring(0, 16)) + '…</td><td>' + (me.admin ? 'Admin' : 'User') + '</td></tr>' +
+            '</tbody></table>' +
+            '<div style="margin-top:0.75rem;color:var(--text-tertiary);font-size:0.78rem">Showing current signed-in user. Full user list requires admin privileges.</div>';
+          bindAuthActions(false);
+          return;
+        }
+        renderAuthSigninPrompt('Session token not found or expired. Sign in to continue.');
         return;
       }
       var data = await res.json();
       var users = data.users || [];
-      document.getElementById('auth-total-users').textContent = users.length;
-      document.getElementById('auth-signups-today').textContent = '—';
-      document.getElementById('auth-sessions').textContent = '—';
+      var sessionsByUID = data.active_sessions_by_uid || {};
+      document.getElementById('auth-total-users').textContent = String(data.total ?? users.length);
+      document.getElementById('auth-signups-today').textContent = String(data.signups_today ?? '0');
+      document.getElementById('auth-sessions').textContent = String(data.active_sessions ?? '0');
+
+      var meUID = '';
+      try {
+        var meRes = await apiFetch(API + '/auth/me');
+        if (meRes.ok) {
+          var meData = await meRes.json();
+          meUID = (meData.user && meData.user.uid) || '';
+        }
+      } catch (_) {}
 
       if (users.length > 0) {
-        var html = '<table class="data-table"><thead><tr><th>Email</th><th>UID</th><th>Created</th></tr></thead><tbody>';
+        var html = '<table class="data-table"><thead><tr><th>Email</th><th>UID</th><th>Role</th><th>Sessions</th><th>Created</th><th>Action</th></tr></thead><tbody>';
         users.slice(0, 20).forEach(function(u) {
-          var uid = (u.uid || '—').substring(0, 16);
-          html += '<tr><td>' + escapeHtml(u.email || '—') + '</td><td class="mono">' + escapeHtml(uid) + '…</td><td class="text-muted">' + escapeHtml(u.created_at || '—') + '</td></tr>';
+          var uid = u.uid || '';
+          var uidShort = uid ? uid.substring(0, 16) + '…' : '—';
+          var isSelf = meUID && uid === meUID;
+          var created = (u.created_at && !isNaN(Number(u.created_at))) ? new Date(Number(u.created_at) * 1000).toLocaleString() : '—';
+          html += '<tr>' +
+            '<td>' + escapeHtml(u.email || '—') + '</td>' +
+            '<td class="mono">' + escapeHtml(uidShort) + '</td>' +
+            '<td>' + (u.admin ? 'Admin' : 'User') + '</td>' +
+            '<td>' + escapeHtml(String(sessionsByUID[uid] ?? 0)) + '</td>' +
+            '<td class="text-muted">' + escapeHtml(created) + '</td>' +
+            '<td>' +
+              (isSelf
+                ? '<span class="text-muted">Current</span>'
+                : '<button class="project-delete-btn auth-delete-user-btn" data-uid="' + escapeHtml(uid) + '" data-email="' + escapeHtml(u.email || '') + '">Delete</button>') +
+            '</td>' +
+          '</tr>';
         });
         html += '</tbody></table>';
-        document.getElementById('auth-users-list').innerHTML = html;
+        document.getElementById('auth-users-list').innerHTML = authActionBar(false) + html;
+        bindAuthActions(false);
+        document.querySelectorAll('.auth-delete-user-btn').forEach(function(btn) {
+          btn.addEventListener('click', async function() {
+            var uid = this.getAttribute('data-uid') || '';
+            var email = this.getAttribute('data-email') || 'this user';
+            if (!uid) return;
+            var confirmed = window.confirm('Delete user ' + email + '?\nThis will revoke all active sessions for that user.');
+            if (!confirmed) return;
+            this.disabled = true;
+            this.textContent = 'Deleting...';
+            try {
+              var delRes = await apiFetch(API + '/auth/admin/users/' + encodeURIComponent(uid), { method: 'DELETE' });
+              if (!delRes.ok) {
+                var errText = await delRes.text();
+                throw new Error(errText || 'Failed to delete user');
+              }
+              showToast('User deleted successfully', 'success');
+              fetchAuthData();
+            } catch (err) {
+              showToast('Delete failed: ' + (err && err.message ? err.message : 'Unknown error'), 'error');
+              this.disabled = false;
+              this.textContent = 'Delete';
+            }
+          });
+        });
         showToast('Loaded ' + users.length + ' users', 'success');
       } else {
-        document.getElementById('auth-users-list').innerHTML = emptyState('👤', 'No Users Yet', 'Create your first user with the SDK or REST API.', 'curl -X POST ' + API + '/auth/signup \\\n  -H "Content-Type: application/json" \\\n  -d \'{"email":"you@mail.com","password":"secret"}\'');
+        document.getElementById('auth-users-list').innerHTML = authActionBar(false) + emptyState('👤', 'No Users Yet', 'Create your first user with the SDK or REST API.', 'curl -X POST ' + API + '/auth/signup \\\n  -H "Content-Type: application/json" \\\n  -d \'{"email":"you@mail.com","password":"secret"}\'');
+        bindAuthActions(false);
       }
     } catch(e) {
-      document.getElementById('auth-users-list').innerHTML = emptyState('⚠️', 'Connection Error', 'Could not reach the auth service.');
+      renderAuthSigninPrompt('Could not fetch auth data. If the service is online, sign in again to restore session.');
       showToast('Failed to load auth data', 'error');
     }
   }
@@ -833,9 +1110,112 @@ document.addEventListener('DOMContentLoaded', () => {
   // DATABASE
   // ════════════════════════════════════
   async function fetchDatabaseData() {
+    function dbActionBar(isAdminMode) {
+      var label = isAdminMode ? '(Project)' : '';
+      return (
+        '<div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.75rem">' +
+          '<button id="db-add-doc-btn" class="primary-btn">Add Document ' + label + '</button>' +
+          '<button id="db-delete-doc-btn" class="danger-btn">Delete Document ' + label + '</button>' +
+        '</div>'
+      );
+    }
+
+    function bindDbActions(isAdminMode) {
+      var addBtn = document.getElementById('db-add-doc-btn');
+      if (addBtn) {
+        addBtn.addEventListener('click', async function() {
+          var port = '';
+          if (isAdminMode) {
+            port = window.prompt('Project port (e.g. 8081):', '8081') || '';
+            if (!port) return;
+          }
+          var collection = window.prompt('Collection name:');
+          if (!collection) return;
+          var docJson = window.prompt('Document JSON (example: {"name":"item","status":"new"}):', '{"name":"item"}');
+          if (!docJson) return;
+          try {
+            var payload = JSON.parse(docJson);
+            var base = isAdminMode ? projectApiBase(port) : API;
+            var res = await apiFetch(base + '/db/' + encodeURIComponent(collection.trim()), {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload),
+            });
+            if (!res.ok) throw new Error(await res.text());
+            showToast('Document added', 'success');
+            fetchDatabaseData();
+          } catch (e) {
+            showToast('Add document failed: ' + (e && e.message ? e.message : 'Invalid JSON or API error'), 'error');
+          }
+        });
+      }
+
+      var delBtn = document.getElementById('db-delete-doc-btn');
+      if (delBtn) {
+        delBtn.addEventListener('click', async function() {
+          var port = '';
+          if (isAdminMode) {
+            port = window.prompt('Project port (e.g. 8081):', '8081') || '';
+            if (!port) return;
+          }
+          var collection = window.prompt('Collection name:');
+          if (!collection) return;
+          var id = window.prompt('Document ID to delete:');
+          if (!id) return;
+          var ok = window.confirm('Delete this document permanently?');
+          if (!ok) return;
+          try {
+            var base = isAdminMode ? projectApiBase(port) : API;
+            var res = await apiFetch(base + '/db/' + encodeURIComponent(collection.trim()) + '/' + encodeURIComponent(id.trim()), {
+              method: 'DELETE',
+            });
+            if (!res.ok) throw new Error(await res.text());
+            showToast('Document deleted', 'success');
+            fetchDatabaseData();
+          } catch (e) {
+            showToast('Delete document failed: ' + (e && e.message ? e.message : 'Unknown error'), 'error');
+          }
+        });
+      }
+    }
+
+    if (IS_ADMIN) {
+      try {
+        var summary = await fetchAdminSummary(false);
+        var projects = (summary && summary.projects) || [];
+        var totalCollections = 0;
+        var totalDocuments = 0;
+        var html = '<table class="data-table"><thead><tr><th>Project</th><th>Port</th><th>Collections</th><th>Documents</th><th>Health</th></tr></thead><tbody>';
+        projects.forEach(function(p) {
+          var db = (p.services && p.services.database) || {};
+          if (db.enabled) {
+            totalCollections += Number(db.collections || 0);
+            totalDocuments += Number(db.documents || 0);
+          }
+          html += '<tr>' +
+            '<td>' + escapeHtml(p.slug || p.name || '—') + '</td>' +
+            '<td class="mono">' + escapeHtml(String(p.port || '—')) + '</td>' +
+            '<td>' + (db.enabled ? escapeHtml(String(db.collections || 0)) : '<span class="text-muted">Disabled</span>') + '</td>' +
+            '<td>' + (db.enabled ? escapeHtml(String(db.documents || 0)) : '<span class="text-muted">—</span>') + '</td>' +
+            '<td>' + escapeHtml((p.health || 'unknown').toUpperCase()) + '</td>' +
+          '</tr>';
+        });
+        html += '</tbody></table>';
+        document.getElementById('db-collections-count').textContent = String(totalCollections);
+        document.getElementById('db-documents-count').textContent = String(totalDocuments);
+        document.getElementById('db-wal-seq').textContent = 'Cluster';
+        document.getElementById('db-collections-list').innerHTML = dbActionBar(true) + (projects.length ? html : emptyState('📦', 'No Projects', 'No deployed projects available in admin registry.'));
+        bindDbActions(true);
+        return;
+      } catch (e) {
+        document.getElementById('db-collections-list').innerHTML = emptyState('⚠️', 'Summary Error', 'Could not fetch project database summaries.');
+        showToast('Failed to load admin database summary', 'error');
+        return;
+      }
+    }
     logActivity('GET', '/db/collections');
     try {
-      var res = await fetch(API + '/db/collections');
+      var res = await apiFetch(API + '/db/collections');
       if (!res.ok) return;
       var data = await res.json();
       var collections = data.collections || [];
@@ -857,13 +1237,15 @@ document.addEventListener('DOMContentLoaded', () => {
             '<td style="color:var(--accent-indigo);font-size:0.75rem;font-weight:500">Browse →</td></tr>';
         });
         html += '</tbody></table>';
-        document.getElementById('db-collections-list').innerHTML = html;
+        document.getElementById('db-collections-list').innerHTML = dbActionBar(false) + html;
+        bindDbActions(false);
 
         document.querySelectorAll('.clickable-row[data-collection]').forEach(function(row) {
           row.addEventListener('click', function() { browseCollection(row.dataset.collection); });
         });
       } else {
-        document.getElementById('db-collections-list').innerHTML = emptyState('📂', 'No Collections Yet', 'Create your first collection by saving a document.', 'curl -X POST ' + API + '/db/my_collection \\\n  -H "Content-Type: application/json" \\\n  -d \'{"name":"Hello","status":"World"}\'');
+        document.getElementById('db-collections-list').innerHTML = dbActionBar(false) + emptyState('📂', 'No Collections Yet', 'Create your first collection by saving a document.', 'curl -X POST ' + API + '/db/my_collection \\\n  -H "Content-Type: application/json" \\\n  -d \'{"name":"Hello","status":"World"}\'');
+        bindDbActions(false);
       }
     } catch(e) {
       document.getElementById('db-collections-list').innerHTML = emptyState('⚠️', 'Connection Error', 'Could not reach the database service.');
@@ -874,7 +1256,7 @@ document.addEventListener('DOMContentLoaded', () => {
   async function browseCollection(name) {
     logActivity('GET', '/db/' + name);
     try {
-      var res = await fetch(API + '/db/' + encodeURIComponent(name) + '?limit=50');
+      var res = await apiFetch(API + '/db/' + encodeURIComponent(name) + '?limit=50');
       if (!res.ok) return;
       var data = await res.json();
       var docs = data.documents || [];
@@ -935,9 +1317,41 @@ document.addEventListener('DOMContentLoaded', () => {
   // STORAGE
   // ════════════════════════════════════
   async function fetchStorageData() {
+    if (IS_ADMIN) {
+      try {
+        var summary = await fetchAdminSummary(false);
+        var projects = (summary && summary.projects) || [];
+        var totalFiles = 0;
+        var totalBytes = 0;
+        var html = '<table class="data-table"><thead><tr><th>Project</th><th>Port</th><th>Files</th><th>Storage Used</th><th>Health</th></tr></thead><tbody>';
+        projects.forEach(function(p) {
+          var st = (p.services && p.services.storage) || {};
+          if (st.enabled) {
+            totalFiles += Number(st.files || 0);
+            totalBytes += Number(st.bytes || 0);
+          }
+          html += '<tr>' +
+            '<td>' + escapeHtml(p.slug || p.name || '—') + '</td>' +
+            '<td class="mono">' + escapeHtml(String(p.port || '—')) + '</td>' +
+            '<td>' + (st.enabled ? escapeHtml(String(st.files || 0)) : '<span class="text-muted">Disabled</span>') + '</td>' +
+            '<td>' + (st.enabled ? escapeHtml(formatBytes(Number(st.bytes || 0))) : '<span class="text-muted">—</span>') + '</td>' +
+            '<td>' + escapeHtml((p.health || 'unknown').toUpperCase()) + '</td>' +
+          '</tr>';
+        });
+        html += '</tbody></table>';
+        document.getElementById('storage-file-count').textContent = String(totalFiles);
+        document.getElementById('storage-size').textContent = formatBytes(totalBytes);
+        document.getElementById('storage-files-list').innerHTML = projects.length ? html : emptyState('📦', 'No Projects', 'No deployed projects available in admin registry.');
+        return;
+      } catch (e) {
+        document.getElementById('storage-files-list').innerHTML = emptyState('⚠️', 'Summary Error', 'Could not fetch project storage summaries.');
+        showToast('Failed to load admin storage summary', 'error');
+        return;
+      }
+    }
     logActivity('GET', '/storage/list');
     try {
-      var res = await fetch(API + '/storage/list');
+      var res = await apiFetch(API + '/storage/list');
       if (!res.ok) {
         document.getElementById('storage-files-list').innerHTML = emptyState('📁', 'No Files Yet', 'Upload your first file using the zone above or via the API.', 'curl -X POST ' + API + '/storage/upload/photos/cat.jpg \\\n  -H "Content-Type: image/jpeg" \\\n  --data-binary @cat.jpg');
         document.getElementById('storage-file-count').textContent = '0';
@@ -985,7 +1399,7 @@ document.addEventListener('DOMContentLoaded', () => {
       try {
         var path = 'uploads/' + file.name;
         logActivity('POST', '/storage/upload/' + path);
-        var res = await fetch(API + '/storage/upload/' + path, {
+        var res = await apiFetch(API + '/storage/upload/' + path, {
           method: 'POST',
           headers: { 'Content-Type': file.type || 'application/octet-stream' },
           body: file,
@@ -1003,9 +1417,42 @@ document.addEventListener('DOMContentLoaded', () => {
   // ANALYTICS
   // ════════════════════════════════════
   async function fetchAnalyticsData() {
+    if (IS_ADMIN) {
+      try {
+        var summary = await fetchAdminSummary(false);
+        var projects = (summary && summary.projects) || [];
+        var totalBufferUsed = 0;
+        var totalBufferCapacity = 0;
+        var html = '<table class="data-table"><thead><tr><th>Project</th><th>Port</th><th>Buffer Used</th><th>Buffer Capacity</th><th>Health</th></tr></thead><tbody>';
+        projects.forEach(function(p) {
+          var a = (p.services && p.services.analytics) || {};
+          if (a.enabled) {
+            totalBufferUsed += Number(a.buffer_used || 0);
+            totalBufferCapacity += Number(a.buffer_capacity || 0);
+          }
+          html += '<tr>' +
+            '<td>' + escapeHtml(p.slug || p.name || '—') + '</td>' +
+            '<td class="mono">' + escapeHtml(String(p.port || '—')) + '</td>' +
+            '<td>' + (a.enabled ? escapeHtml(String(a.buffer_used || 0)) : '<span class="text-muted">Disabled</span>') + '</td>' +
+            '<td>' + (a.enabled ? escapeHtml(String(a.buffer_capacity || 0)) : '<span class="text-muted">—</span>') + '</td>' +
+            '<td>' + escapeHtml((p.health || 'unknown').toUpperCase()) + '</td>' +
+          '</tr>';
+        });
+        html += '</tbody></table>';
+        document.getElementById('analytics-events-today').textContent = String(totalBufferUsed);
+        document.getElementById('analytics-top-event').textContent = totalBufferCapacity > 0 ? (String(totalBufferUsed) + ' / ' + String(totalBufferCapacity)) : '—';
+        document.getElementById('analytics-log-days').textContent = 'Cluster';
+        document.getElementById('analytics-counters').innerHTML = projects.length ? html : emptyState('📦', 'No Projects', 'No deployed projects available in admin registry.');
+        return;
+      } catch (e) {
+        document.getElementById('analytics-counters').innerHTML = emptyState('⚠️', 'Summary Error', 'Could not fetch project analytics summaries.');
+        showToast('Failed to load admin analytics summary', 'error');
+        return;
+      }
+    }
     logActivity('GET', '/analytics/stats');
     try {
-      var res = await fetch(API + '/analytics/stats');
+      var res = await apiFetch(API + '/analytics/stats');
       if (!res.ok) {
         document.getElementById('analytics-counters').innerHTML = emptyState('📊', 'No Events Yet', 'Start tracking events with the SDK or API.', 'curl -X POST ' + API + '/analytics/track \\\n  -H "Content-Type: application/json" \\\n  -d \'{"name":"page_view","properties":{"page":"/home"}}\'');
         return;
@@ -1035,9 +1482,89 @@ document.addEventListener('DOMContentLoaded', () => {
   // SETTINGS
   // ════════════════════════════════════
   async function fetchSettingsData() {
+    if (IS_ADMIN) {
+      try {
+        var summary = await fetchAdminSummary(false);
+        var projects = (summary && summary.projects) || [];
+        var c = document.getElementById('settings-info');
+        c.innerHTML = '';
+        var totals = (summary && summary.totals) || {};
+        var items = [
+          { label: 'Mode', value: 'Admin Control Center' },
+          { label: 'Projects', value: String(totals.projects || projects.length || 0) },
+          { label: 'Online', value: String(totals.online || 0) },
+          { label: 'Offline', value: String(totals.offline || 0) },
+          { label: 'Auth Enabled', value: String(projects.filter(function(p) { return p.services && p.services.auth && p.services.auth.enabled; }).length) },
+          { label: 'DB Enabled', value: String(projects.filter(function(p) { return p.services && p.services.database && p.services.database.enabled; }).length) },
+          { label: 'Storage Enabled', value: String(projects.filter(function(p) { return p.services && p.services.storage && p.services.storage.enabled; }).length) },
+          { label: 'Hosting Enabled', value: String(projects.filter(function(p) { return p.services && p.services.hosting && p.services.hosting.enabled; }).length) },
+        ];
+        items.forEach(function(item) {
+          var div = document.createElement('div');
+          div.className = 'settings-item';
+          div.innerHTML = '<span class="label">' + escapeHtml(item.label) + '</span><span class="value">' + escapeHtml(item.value) + '</span>';
+          c.appendChild(div);
+        });
+
+        var danger = document.createElement('div');
+        danger.className = 'empty-state';
+        danger.style.marginTop = '1rem';
+        danger.innerHTML =
+          '<div class="empty-icon">🧨</div>' +
+          '<h3>Project-Wise Destructive Controls</h3>' +
+          '<p>Purges data for a selected project and restarts that project service.</p>' +
+          '<div style="display:flex;gap:0.5rem;flex-wrap:wrap;justify-content:center;margin-top:0.75rem">' +
+            '<input id="purge-project-slug" class="modal-input" placeholder="project slug (e.g. heimdall)" style="max-width:260px">' +
+            '<select id="purge-project-scope" class="modal-input" style="max-width:220px">' +
+              '<option value="all">all services</option>' +
+              '<option value="auth">auth</option>' +
+              '<option value="database">database</option>' +
+              '<option value="storage">storage</option>' +
+              '<option value="hosting">hosting</option>' +
+              '<option value="analytics">analytics</option>' +
+              '<option value="functions">functions</option>' +
+              '<option value="realtime">realtime</option>' +
+            '</select>' +
+            '<button id="purge-project-btn" class="danger-btn">Purge Project Data</button>' +
+          '</div>';
+        c.appendChild(danger);
+        var purgeBtn = document.getElementById('purge-project-btn');
+        if (purgeBtn) {
+          purgeBtn.addEventListener('click', async function() {
+            var slugEl = document.getElementById('purge-project-slug');
+            var scopeEl = document.getElementById('purge-project-scope');
+            var slug = slugEl ? String(slugEl.value || '').trim() : '';
+            var scope = scopeEl ? String(scopeEl.value || 'all') : 'all';
+            if (!slug) {
+              showToast('Enter a project slug first.', 'error');
+              return;
+            }
+            purgeBtn.disabled = true;
+            purgeBtn.textContent = 'Purging...';
+            try {
+              var ok = await requestProjectPurge(API + '/admin/projects/' + encodeURIComponent(slug) + '/purge', [scope]);
+              if (ok) {
+                showToast('Project purge executed for ' + slug, 'success');
+                scanProjects();
+              }
+            } catch (e) {
+              showToast('Purge failed: ' + (e && e.message ? e.message : 'Unknown error'), 'error');
+            } finally {
+              purgeBtn.disabled = false;
+              purgeBtn.textContent = 'Purge Project Data';
+            }
+          });
+        }
+        return;
+      } catch (e) {
+        document.getElementById('settings-info').innerHTML = emptyState('⚠️', 'Summary Error', 'Could not fetch project service matrix.');
+        showToast('Failed to load admin settings summary', 'error');
+        return;
+      }
+    }
     logActivity('GET', '/health');
     try {
-      var res = await fetch(API + '/health');
+      var res = await apiFetch(API + '/health');
       var data = await res.json();
       var c = document.getElementById('settings-info');
       c.innerHTML = '';
@@ -1057,6 +1584,46 @@ document.addEventListener('DOMContentLoaded', () => {
         div.innerHTML = '<span class="label">' + escapeHtml(item.label) + '</span><span class="value">' + escapeHtml(item.value) + '</span>';
         c.appendChild(div);
       });
+
+      var childDanger = document.createElement('div');
+      childDanger.className = 'empty-state';
+      childDanger.style.marginTop = '1rem';
+      childDanger.innerHTML =
+        '<div class="empty-icon">🧨</div>' +
+        '<h3>Instance Destructive Controls</h3>' +
+        '<p>Purge selected service data in this child project and restart service.</p>' +
+        '<div style="display:flex;gap:0.5rem;flex-wrap:wrap;justify-content:center;margin-top:0.75rem">' +
+          '<select id="purge-self-scope" class="modal-input" style="max-width:220px">' +
+            '<option value="all">all services</option>' +
+            '<option value="auth">auth</option>' +
+            '<option value="database">database</option>' +
+            '<option value="storage">storage</option>' +
+            '<option value="hosting">hosting</option>' +
+            '<option value="analytics">analytics</option>' +
+            '<option value="functions">functions</option>' +
+            '<option value="realtime">realtime</option>' +
+          '</select>' +
+          '<button id="purge-self-btn" class="danger-btn">Purge This Instance</button>' +
+        '</div>';
+      c.appendChild(childDanger);
+      var purgeSelfBtn = document.getElementById('purge-self-btn');
+      if (purgeSelfBtn) {
+        purgeSelfBtn.addEventListener('click', async function() {
+          var scopeEl = document.getElementById('purge-self-scope');
+          var scope = scopeEl ? String(scopeEl.value || 'all') : 'all';
+          purgeSelfBtn.disabled = true;
+          purgeSelfBtn.textContent = 'Purging...';
+          try {
+            var ok = await requestProjectPurge(API + '/admin/self/purge', [scope]);
+            if (ok) showToast('Instance purge executed', 'success');
+          } catch (e) {
+            showToast('Purge failed: ' + (e && e.message ? e.message : 'Unknown error'), 'error');
+          } finally {
+            purgeSelfBtn.disabled = false;
+            purgeSelfBtn.textContent = 'Purge This Instance';
+          }
+        });
+      }
     } catch(e) {
       document.getElementById('settings-info').innerHTML = emptyState('⚠️', 'Connection Error', 'Could not reach the server.');
       showToast('Failed to load settings', 'error');

@@ -136,7 +136,28 @@ func (ts *TokenStore) CountForUser(userID string) int {
 	ts.mu.RLock()
 	defer ts.mu.RUnlock()
 
-	return len(ts.byUser[userID])
+	count := 0
+	for _, tokenStr := range ts.byUser[userID] {
+		token, ok := ts.tokens[tokenStr]
+		if ok && !token.IsExpired() {
+			count++
+		}
+	}
+	return count
+}
+
+// CountActive returns the number of non-expired refresh tokens across all users.
+func (ts *TokenStore) CountActive() int {
+	ts.mu.RLock()
+	defer ts.mu.RUnlock()
+
+	count := 0
+	for _, token := range ts.tokens {
+		if token != nil && !token.IsExpired() {
+			count++
+		}
+	}
+	return count
 }
 
 // ---- Persistence ----

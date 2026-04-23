@@ -24,6 +24,9 @@ import (
 	"github.com/ayushkunwarsingh/forge/rules"
 	"github.com/ayushkunwarsingh/forge/server"
 	"github.com/ayushkunwarsingh/forge/storage"
+	"bytes"
+	"io"
+	"net/http"
 )
 
 const banner = `
@@ -70,6 +73,14 @@ func main() {
 		"arch":     runtime.GOARCH,
 		"cpus":     runtime.NumCPU(),
 	})
+
+	// Validate SMTP config
+	if err := cfg.ValidateEmailConfig(); err != nil {
+		log.Warn("Email service is enabled but SMTP configuration is incomplete. OTP delivery will fail.", logger.Fields{
+			"error": err.Error(),
+			"tip":   "Set FORGE_SMTP_HOST, FORGE_SMTP_USER, FORGE_SMTP_PASS, etc.",
+		})
+	}
 
 	// Create data directories
 	if err := cfg.EnsureDataDirs(); err != nil {
@@ -285,6 +296,62 @@ func main() {
 
 	log.Info("Admin dashboard registered", logger.Fields{
 		"path": "/dashboard/",
+	})
+
+	// ── Heimdall API Proxy ──────────────────────────────────────────
+	// Tunnel /api/* requests to the Python worker on port 8000
+	proxyHandler := func(ctx *server.Context) {
+		path := ctx.Param("path")
+		if path == "" {
+			path = "/"
+		} else if path[0] != '/' {
+			path = "/" + path
+		}
+		targetURL := fmt.Sprintf("http://127.0.0.1:8000%s", path)
+		if ctx.Request.RawQuery != "" {
+			targetURL += "?" + ctx.Request.RawQuery
+		}
+
+		req, err := http.NewRequest(ctx.Request.Method, targetURL, bytes.NewReader(ctx.Request.Body))
+		if err != nil {
+			ctx.Error(500, "Proxy creation error: "+err.Error())
+			return
+		}
+
+		// Copy request headers
+		for k, v := range ctx.Request.Headers {
+			req.Header.Set(k, v)
+		}
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			ctx.Error(502, "Proxy connection error: "+err.Error())
+			return
+		}
+		defer resp.Body.Close()
+
+		body, _ := io.ReadAll(resp.Body)
+
+		// Copy response headers
+		for k, v := range resp.Header {
+			if len(v) > 0 {
+				ctx.Response.SetHeader(k, v[0])
+			}
+		}
+		ctx.Response.SetStatus(resp.StatusCode)
+		ctx.Response.SetBody(body)
+	}
+
+	router.Handle("GET", "/api/*path", proxyHandler)
+	router.Handle("POST", "/api/*path", proxyHandler)
+	router.Handle("PUT", "/api/*path", proxyHandler)
+	router.Handle("PATCH", "/api/*path", proxyHandler)
+	router.Handle("DELETE", "/api/*path", proxyHandler)
+	router.Handle("OPTIONS", "/api/*path", proxyHandler)
+
+	log.Info("Heimdall API proxy registered", logger.Fields{
+		"prefix": "/api/",
+		"target": "http://127.0.0.1:8000",
 	})
 
 	// ── Health & Info Endpoints ──────────────────────────────────────
